@@ -1,0 +1,17 @@
+{
+  "name": "m4car-apilayer",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Polls AutoScan API and reports new vs already-processed scans",
+  "dependencies": {
+    "axios": "^1.18.1",
+    "dotenv": "^17.4.2",
+    "node-cron": "^4.6.0"
+  }
+}
