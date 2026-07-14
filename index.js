@@ -16,6 +16,7 @@ const IMPORT_DELAY_MS = 500;
 const INCOMPLETE_ANALYZED = '0001-01-01T00:00:00+00:00';
 
 console.log('=== AutoScan checker boot ===');
+console.log('[pipeline-test] Ephemeral log for deployment pipeline verification');
 console.log(`Base URL: ${BASE_URL}`);
 console.log(`API key loaded: ${API_KEY ? `${API_KEY.slice(0, 8)}...` : 'MISSING'}`);
 console.log(`M4Car URL: ${M4CAR_INTERNAL_URL}`);
