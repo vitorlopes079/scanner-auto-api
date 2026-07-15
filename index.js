@@ -12,6 +12,7 @@ const M4CAR_INTERNAL_SECRET = process.env.M4CAR_INTERNAL_SECRET;
 const PAGE_SIZE = 50;
 const DAILY_IMPORT_LIMIT = 50;
 const CRON_EXPRESSION = '0 6 * * *';
+const CACHE_CRON_EXPRESSION = '0 * * * *';
 const CRON_TIMEZONE = 'Europe/Berlin';
 const IMPORT_DELAY_MS = 500;
 const INCOMPLETE_ANALYZED = '0001-01-01T00:00:00+00:00';
@@ -27,6 +28,7 @@ console.log(`M4Car URL: ${M4CAR_INTERNAL_URL}`);
 console.log(`M4Car secret loaded: ${M4CAR_INTERNAL_SECRET ? 'yes' : 'MISSING'}`);
 console.log(`Checkpoint: ImportCheckpoint key="${CHECKPOINT_KEY}"`);
 console.log(`Page size: ${PAGE_SIZE}`);
+console.log(`Cache refresh cron: ${CACHE_CRON_EXPRESSION} (${CRON_TIMEZONE})`);
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -528,27 +530,312 @@ async function checkScans({ limit = null } = {}) {
   }
 }
 
-function startScheduler() {
-  let isRunning = false;
+function isIncompleteAnalyzedDate(scan) {
+  return scan?.analyzed === INCOMPLETE_ANALYZED;
+}
 
-  console.log(`Schedule: daily at 06:00 (${CRON_TIMEZONE})`);
-  console.log('Waiting for scheduled run...\n');
+function cacheFieldsFromScan(summary, detail) {
+  const scannedAt = parseScanDate(detail);
+  return {
+    registrationNumber:
+      summary.registrationNumber ||
+      detail.car?.registrationNumber ||
+      detail.registrationNumber ||
+      null,
+    chassisNumber:
+      summary.chassisNumber ||
+      detail.car?.chassisNumber ||
+      detail.chassisNumber ||
+      null,
+    scanned: scannedAt,
+    isIncomplete: isIncompleteAnalyzedDate(detail),
+  };
+}
+
+async function refreshAutoscanScanCache() {
+  console.log('\n========================================');
+  console.log(`[cache] Started at ${new Date().toISOString()}`);
+  console.log('[cache] AutoscanScanCache refresh (incremental)');
+  console.log('========================================');
+
+  let cachedCount = 0;
+  let skippedCached = 0;
+  let detailFetches = 0;
+  let failedDetails = 0;
+
+  try {
+    const projects = await fetchProjects();
+
+    if (projects.length === 0) {
+      console.log('[cache] No projects found.');
+      return {
+        ok: true,
+        status: 'ok',
+        cachedCount: 0,
+        skippedCached: 0,
+        detailFetches: 0,
+        failedDetails: 0,
+        message: 'No projects found',
+      };
+    }
+
+    for (const [index, project] of projects.entries()) {
+      console.log(
+        `[cache] Fetching scans (Descending) for project ${index + 1}/${projects.length}: ${project.name}`
+      );
+      const summaries = await fetchScans(project.id, project.name, { orderBy: 'Descending' });
+
+      for (const summary of summaries) {
+        const existing = await prisma.autoscanScanCache.findUnique({
+          where: { id: summary.id },
+          select: { id: true },
+        });
+
+        if (existing) {
+          skippedCached += 1;
+          console.log(
+            `  [cache] ${summary.id} | already cached — stop project walk`
+          );
+          break;
+        }
+
+        const label = summary.registrationNumber || summary.id;
+        console.log(`[cache] Detail-fetch ${label} (${summary.id})...`);
+
+        let detail;
+        try {
+          detail = await fetchScanDetails(summary.id);
+          detailFetches += 1;
+        } catch (error) {
+          const message = error.response
+            ? `${error.response.status} ${error.response.statusText}`
+            : error.message;
+          console.log(`[cache] Detail-fetch failed for ${summary.id}: ${message}`);
+          failedDetails += 1;
+          continue;
+        }
+
+        const fields = cacheFieldsFromScan(summary, detail);
+
+        try {
+          await prisma.autoscanScanCache.create({
+            data: {
+              id: summary.id,
+              ...fields,
+            },
+          });
+          cachedCount += 1;
+          console.log(
+            `  [cache] ${summary.id} | scanned: ${fields.scanned ? fields.scanned.toISOString() : 'null'} | incomplete: ${fields.isIncomplete} | CACHED`
+          );
+        } catch (error) {
+          if (error.code === 'P2002') {
+            skippedCached += 1;
+            console.log(
+              `  [cache] ${summary.id} | already cached (race) — stop project walk`
+            );
+            break;
+          }
+          console.error(`[cache] Failed to create cache row for ${summary.id}: ${error.message}`);
+          failedDetails += 1;
+        }
+      }
+    }
+
+    console.log('\n---------- CACHE REPORT ----------');
+    console.log(`New scans cached: ${cachedCount}`);
+    console.log(`Skipped (already cached / boundary): ${skippedCached}`);
+    console.log(`Detail fetches: ${detailFetches}`);
+    console.log(`Failed details/creates: ${failedDetails}`);
+    console.log('----------------------------------');
+    console.log(`[cache] Finished at ${new Date().toISOString()}`);
+
+    return {
+      ok: true,
+      status: 'ok',
+      cachedCount,
+      skippedCached,
+      detailFetches,
+      failedDetails,
+      message: `Cached ${cachedCount} new scan(s); skipped ${skippedCached} already-cached`,
+    };
+  } catch (error) {
+    const message = error.response
+      ? `${error.response.status} ${error.response.statusText}`
+      : error.message;
+    console.error(`[cache] Failed to refresh AutoscanScanCache: ${message}`);
+    if (error.stack) {
+      console.error('[cache] Stack:', error.stack);
+    }
+    return {
+      ok: false,
+      status: 'error',
+      cachedCount,
+      skippedCached,
+      detailFetches,
+      failedDetails,
+      message,
+    };
+  }
+}
+
+async function rebuildAutoscanScanCache() {
+  console.log('\n========================================');
+  console.log(`[cache] Started at ${new Date().toISOString()}`);
+  console.log('[cache] AutoscanScanCache FULL rebuild (no early-stop)');
+  console.log('========================================');
+
+  let upsertedCount = 0;
+  let detailFetches = 0;
+  let failedDetails = 0;
+  let listTotal = 0;
+
+  try {
+    const projects = await fetchProjects();
+
+    if (projects.length === 0) {
+      console.log('[cache] No projects found.');
+      return {
+        ok: true,
+        status: 'ok',
+        upsertedCount: 0,
+        detailFetches: 0,
+        failedDetails: 0,
+        listTotal: 0,
+        message: 'No projects found',
+      };
+    }
+
+    for (const [index, project] of projects.entries()) {
+      console.log(
+        `[cache] Fetching scans (Descending) for project ${index + 1}/${projects.length}: ${project.name}`
+      );
+      const summaries = await fetchScans(project.id, project.name, { orderBy: 'Descending' });
+      listTotal += summaries.length;
+
+      for (const summary of summaries) {
+        const label = summary.registrationNumber || summary.id;
+        console.log(`[cache] Detail-fetch ${label} (${summary.id})...`);
+
+        let detail;
+        try {
+          detail = await fetchScanDetails(summary.id);
+          detailFetches += 1;
+        } catch (error) {
+          const message = error.response
+            ? `${error.response.status} ${error.response.statusText}`
+            : error.message;
+          console.log(`[cache] Detail-fetch failed for ${summary.id}: ${message}`);
+          failedDetails += 1;
+          continue;
+        }
+
+        const fields = cacheFieldsFromScan(summary, detail);
+
+        try {
+          await prisma.autoscanScanCache.upsert({
+            where: { id: summary.id },
+            create: {
+              id: summary.id,
+              ...fields,
+            },
+            update: fields,
+          });
+          upsertedCount += 1;
+          console.log(
+            `  [cache] ${summary.id} | scanned: ${fields.scanned ? fields.scanned.toISOString() : 'null'} | incomplete: ${fields.isIncomplete} | UPSERTED`
+          );
+        } catch (error) {
+          console.error(`[cache] Failed to upsert cache row for ${summary.id}: ${error.message}`);
+          failedDetails += 1;
+        }
+      }
+    }
+
+    console.log('\n---------- CACHE REBUILD REPORT ----------');
+    console.log(`List summaries: ${listTotal}`);
+    console.log(`Upserted: ${upsertedCount}`);
+    console.log(`Detail fetches: ${detailFetches}`);
+    console.log(`Failed details/upserts: ${failedDetails}`);
+    console.log('-----------------------------------------');
+    console.log(`[cache] Finished at ${new Date().toISOString()}`);
+
+    return {
+      ok: true,
+      status: 'ok',
+      upsertedCount,
+      detailFetches,
+      failedDetails,
+      listTotal,
+      message: `Upserted ${upsertedCount} scan(s) from ${listTotal} list item(s)`,
+    };
+  } catch (error) {
+    const message = error.response
+      ? `${error.response.status} ${error.response.statusText}`
+      : error.message;
+    console.error(`[cache] Failed to rebuild AutoscanScanCache: ${message}`);
+    if (error.stack) {
+      console.error('[cache] Stack:', error.stack);
+    }
+    return {
+      ok: false,
+      status: 'error',
+      upsertedCount,
+      detailFetches,
+      failedDetails,
+      listTotal,
+      message,
+    };
+  }
+}
+
+function startScheduler() {
+  let isCacheRunning = false;
+
+  // Daily 06:00 import batch disabled for now — re-enable when ready.
+  // console.log(`Schedule: daily import at 06:00 (${CRON_TIMEZONE})`);
+  // let isImportRunning = false;
+  // cron.schedule(
+  //   CRON_EXPRESSION,
+  //   async () => {
+  //     if (isImportRunning) {
+  //       console.log('[cron] Previous import run is still active; skipping this trigger.');
+  //       return;
+  //     }
+  //
+  //     isImportRunning = true;
+  //     console.log('\n[cron] Triggered scheduled import run');
+  //
+  //     try {
+  //       await checkScans({ limit: DAILY_IMPORT_LIMIT });
+  //     } finally {
+  //       isImportRunning = false;
+  //     }
+  //   },
+  //   {
+  //     timezone: CRON_TIMEZONE,
+  //   }
+  // );
+
+  console.log('[cron] Daily 06:00 import batch is DISABLED');
+  console.log(`Schedule: hourly AutoscanScanCache refresh (0 * * * *, ${CRON_TIMEZONE})`);
+  console.log('Waiting for scheduled runs...\n');
 
   cron.schedule(
-    CRON_EXPRESSION,
+    CACHE_CRON_EXPRESSION,
     async () => {
-      if (isRunning) {
-        console.log('[cron] Previous run is still active; skipping this trigger.');
+      if (isCacheRunning) {
+        console.log('[cron] Previous cache refresh is still active; skipping this trigger.');
         return;
       }
 
-      isRunning = true;
-      console.log('\n[cron] Triggered scheduled run');
+      isCacheRunning = true;
+      console.log('\n[cron] Triggered hourly AutoscanScanCache refresh');
 
       try {
-        await checkScans({ limit: DAILY_IMPORT_LIMIT });
+        await refreshAutoscanScanCache();
       } finally {
-        isRunning = false;
+        isCacheRunning = false;
       }
     },
     {
@@ -557,7 +844,14 @@ function startScheduler() {
   );
 }
 
-module.exports = { checkScans, importScan, listScans, startScheduler };
+module.exports = {
+  checkScans,
+  importScan,
+  listScans,
+  refreshAutoscanScanCache,
+  rebuildAutoscanScanCache,
+  startScheduler,
+};
 
 if (require.main === module) {
   const { startHttpServer } = require('./http-server');

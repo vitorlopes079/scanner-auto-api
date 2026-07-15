@@ -39,14 +39,14 @@ function httpStatusForResult(result) {
   return 200;
 }
 
-async function handleImportOne(req, res) {
+function assertApilayerSecret(req, res) {
   if (!APILAYER_SECRET) {
     sendJson(res, 500, {
       ok: false,
       status: 'error',
       message: 'APILAYER_SECRET is not configured',
     });
-    return;
+    return false;
   }
 
   const provided = req.headers['x-apilayer-secret'];
@@ -56,8 +56,14 @@ async function handleImportOne(req, res) {
       status: 'error',
       message: 'Unauthorized',
     });
-    return;
+    return false;
   }
+
+  return true;
+}
+
+async function handleImportOne(req, res) {
+  if (!assertApilayerSecret(req, res)) return;
 
   let body;
   try {
@@ -90,6 +96,22 @@ async function handleImportOne(req, res) {
   sendJson(res, httpStatusForResult(result), result);
 }
 
+async function handleCacheRefresh(req, res) {
+  if (!assertApilayerSecret(req, res)) return;
+
+  // Drain body if present (optional for this endpoint).
+  try {
+    await readJsonBody(req);
+  } catch {
+    // ignore empty/invalid body for trigger endpoint
+  }
+
+  console.log('[http] POST /cache-refresh');
+  const { refreshAutoscanScanCache } = require('./index');
+  const result = await refreshAutoscanScanCache();
+  sendJson(res, result.ok ? 200 : 502, result);
+}
+
 function startHttpServer() {
   const server = http.createServer(async (req, res) => {
     try {
@@ -102,6 +124,11 @@ function startHttpServer() {
 
       if (req.method === 'POST' && url.pathname === '/import-one') {
         await handleImportOne(req, res);
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/cache-refresh') {
+        await handleCacheRefresh(req, res);
         return;
       }
 
@@ -123,6 +150,7 @@ function startHttpServer() {
   server.listen(PORT, () => {
     console.log(`[http] Listening on port ${PORT}`);
     console.log(`[http] POST /import-one (header x-apilayer-secret)`);
+    console.log(`[http] POST /cache-refresh (header x-apilayer-secret)`);
   });
 
   return server;

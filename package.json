@@ -8,7 +8,10 @@
     "import:manual": "node run-import.js",
     "import:one": "node run-import-one.js",
     "inspect:scan": "node inspect-scan.js",
-    "list:scans": "node run-list-scans.js"
+    "list:scans": "node run-list-scans.js",
+    "cache:refresh": "node run-cache-refresh.js",
+    "cache:rebuild": "node run-cache-rebuild.js",
+    "cache:clear": "node clear-cache.js"
   },
   "keywords": [],
   "author": "",

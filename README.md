@@ -50,6 +50,15 @@ npm run list:scans
 
 # Fetch and print one AutoScan payload (no M4Car import)
 npm run inspect:scan -- <autoscanId>
+
+# Refresh AutoscanScanCache now (same as hourly job)
+npm run cache:refresh
+
+# Full rebuild — detail-fetch every scan and upsert (no early-stop)
+npm run cache:rebuild
+
+# Delete all AutoscanScanCache rows (manual/dev)
+npm run cache:clear
 ```
 
 ### HTTP API (same process as the cron)
@@ -65,9 +74,15 @@ curl -s -X POST http://localhost:3100/import-one \
   -H "Content-Type: application/json" \
   -H "x-apilayer-secret: $APILAYER_SECRET" \
   -d '{"autoscanId":"<id>"}'
+
+# Refresh AutoscanScanCache now
+curl -s -X POST http://localhost:3100/cache-refresh \
+  -H "x-apilayer-secret: $APILAYER_SECRET"
 ```
 
 Responses use a clear `status`: `created`, `already_imported`, `incomplete`, or `error`.
+
+The same process also runs an hourly job (`0 * * * *`, Europe/Berlin) that caches new AutoScan `scanned` timestamps into `AutoscanScanCache` (stop-at-already-cached, no full history walk).
 
 ## Tracking import state
 

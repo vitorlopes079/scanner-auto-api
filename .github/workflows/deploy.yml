@@ -44,7 +44,7 @@ jobs:
           host: ${{ secrets.VPS_TAILSCALE_IP }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          connetimeout: 60s
+          connect_timeout: 60s
           script: |
             cd /opt/m4car-apilayer
             docker compose pull

@@ -319,6 +319,18 @@ model ImportCheckpoint {
   updatedAt       DateTime @updatedAt
 }
 
+/// Cached AutoScan timestamps for admin UI sorting (filled by m4car-apilayer hourly job).
+model AutoscanScanCache {
+  id                 String    @id // autoscanId
+  registrationNumber String?
+  chassisNumber      String?
+  scanned            DateTime?
+  isIncomplete       Boolean   @default(false)
+  updatedAt          DateTime  @updatedAt
+
+  @@index([scanned])
+}
+
 /// Audit trail of user and system actions. `userId` is nullable so system
 /// events (no actor) can still be recorded; the actor is kept on user delete.
 model ActivityLog {
