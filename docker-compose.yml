@@ -1,0 +1,11 @@
+services:
+  m4car-apilayer:
+    image: ghcr.io/vitorlopes079/m4car-apilayer:latest
+    container_name: m4car-apilayer
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    env_file:
+      - .env
+    environment:
+      PORT: "3100"

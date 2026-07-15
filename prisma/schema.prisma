@@ -1,0 +1,337 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  ADMIN
+  ASSESSOR
+  TECHNICIAN
+}
+
+enum ActivityAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  CONVERT
+  SEND
+  DUPLICATE
+  EXPORT
+}
+
+enum JobStatus {
+  damage_detection
+  quote_ready
+  repair_in_progress
+  completed
+  invoice_sent
+  invoice_paid
+}
+
+enum JobPriority {
+  normal
+  high
+  urgent
+}
+
+/// App profile linked to Supabase Auth (`auth.users.id`).
+model AppUser {
+  id           String        @id
+  email        String        @unique
+  name         String?
+  role         UserRole      @default(ASSESSOR)
+  bannedAt     DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  assessor     Assessor?
+  technician   Technician?
+  activityLogs ActivityLog[]
+  notifications Notification[]
+}
+
+model Assessor {
+  id                     String   @id
+  name                   String
+  email                  String   @unique
+  mobile                 String?
+  observations           String?
+  canSendEmail           Boolean  @default(true)
+  canDownloadDocuments   Boolean  @default(true)
+  canChangeMatrix        Boolean  @default(true)
+  canChangeHV            Boolean  @default(true)
+  canCreateQuote         Boolean  @default(true)
+  canCreateInvoice       Boolean  @default(true)
+  canCreateCredit        Boolean  @default(true)
+  canDelete              Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  appUser                AppUser  @relation(fields: [id], references: [id], onDelete: Cascade)
+  jobs                   Job[]
+}
+
+model Company {
+  id                  String     @id @default(cuid())
+  name                String
+  businessUnit        String?
+  street              String?
+  city                String?
+  country             String     @default("DE")
+  phone               String?
+  fax                 String?
+  email               String?
+  website             String?
+  taxNumber           String?
+  vatId               String?
+  vatRate             Decimal    @default(19.00) @db.Decimal(5, 2)
+  bankName            String?
+  iban                String?
+  swift               String?
+  logoUrl             String?
+  defaultDivider      Int        @default(10)
+  defaultHourlyRate   Decimal    @default(99.00) @db.Decimal(10, 2)
+  defaultCurrency     String     @default("EUR")
+  defaultStartAw      Decimal    @default(13) @db.Decimal(10, 2)
+  defaultFinishAw     Decimal    @default(6) @db.Decimal(10, 2)
+  defaultRemontage    Decimal    @default(35.3) @db.Decimal(10, 2)
+  companyShare        Decimal?   @map("defaultCompanyShare") @db.Decimal(5, 2)
+  technicianShare     Decimal?   @map("defaultTechnicianShare") @db.Decimal(5, 2)
+  dealerShare         Decimal?   @map("defaultDealerShare") @db.Decimal(5, 2)
+  averageDentDiameter String?
+  defaultPartDiameter String?
+  repairTimeAwFactor  Decimal    @default(0.02) @db.Decimal(10, 4)
+  defaultMatrixSetId  String?
+  projectsPerPage     Int        @default(25)
+  defaultMatrixSet    MatrixSet? @relation(fields: [defaultMatrixSetId], references: [id])
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+}
+
+model Technician {
+  id           String   @id @default(cuid())
+  authUserId   String?  @unique
+  name         String
+  email        String?
+  mobile       String?
+  observations String?
+  canAccessProjects Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  authUser     AppUser? @relation(fields: [authUserId], references: [id], onDelete: SetNull)
+  jobs         Job[]
+}
+
+model Customer {
+  id                  String   @id @default(cuid())
+  name                String
+  // Case-insensitive, trimmed normalization of `name` (lower(btrim(name))),
+  // maintained in normalizeCustomerInput(). The @unique index is the race-proof
+  // guarantee against duplicate customer names.
+  nameKey             String   @unique @map("name_key")
+  street              String?
+  zipCity             String?
+  phone               String?
+  email               String?
+  averageDentDiameter String?
+  companyShare        Decimal  @default(40) @db.Decimal(5, 2)
+  technicianShare     Decimal  @default(0) @db.Decimal(5, 2)
+  dealerShare         Decimal  @default(60) @db.Decimal(5, 2)
+  vatRate             Decimal? @db.Decimal(5, 2)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  jobs                Job[]
+}
+
+model Job {
+  id                  String      @id @default(cuid())
+  quoteNumber         String      @unique
+  invoiceNumber       String?     @unique
+  creditNumber        String?     @unique
+  status              JobStatus   @default(damage_detection)
+  priority            JobPriority @default(normal)
+  kanbanOrder         Int         @default(0)
+  hasInvoice          Boolean     @default(false)
+  hasCredit           Boolean     @default(false)
+  customerId          String?
+  customerName        String?
+  customerStreet      String?
+  customerCity        String?
+  customerPhone       String?
+  customerEmail       String?
+  customer            Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  matrixSetId         String?
+  brandType           String?
+  licensePlate        String?
+  vin                 String?
+  color               String?
+  divider             Int         @default(10)
+  hourlyRate          Decimal     @default(99.00) @db.Decimal(10, 2)
+  currency            String      @default("EUR")
+  vatRate             Decimal     @default(19.00) @db.Decimal(5, 2)
+  calcList            String?
+  assessorId          String?
+  assessor            String?
+  technicianId        String?
+  technician          String?
+  epNumber            String?
+  startAw             Decimal     @default(13) @db.Decimal(10, 2)
+  finishAw            Decimal     @default(6) @db.Decimal(10, 2)
+  smallMaterials      Decimal     @default(0) @db.Decimal(5, 2)
+  disassembly         Decimal     @default(35.3) @db.Decimal(10, 2)
+  companyShare        Decimal     @default(30) @db.Decimal(5, 2)
+  technicianShare     Decimal     @default(40) @db.Decimal(5, 2)
+  dealerShare         Decimal     @default(30) @db.Decimal(5, 2)
+  averageDentDiameter String?
+  calcDate            DateTime    @default(now())
+  invoiceDate         DateTime?
+  creditDate          DateTime?
+  quoteDateLocked     Boolean     @default(false)
+  invoiceDateLocked   Boolean     @default(false)
+  creditDateLocked    Boolean     @default(false)
+  executionDate       DateTime?
+  quoteSentAt         DateTime?
+  invoiceSentAt       DateTime?
+  creditSentAt        DateTime?
+  repairRevisionStartedAt DateTime?
+  includePhotosInPdf  Boolean     @default(false)
+  photoAppendixNotes  String?     @db.VarChar(200)
+  createIdempotencyKey String?    @unique
+  autoscanId          String?     @unique
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  matrixSet           MatrixSet?  @relation(fields: [matrixSetId], references: [id], onDelete: SetNull)
+  assignedAssessor    Assessor?   @relation(fields: [assessorId], references: [id], onDelete: SetNull)
+  assignedTechnician  Technician? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+  parts               JobPart[]
+  notifications       Notification[]
+  notes               JobNote[]
+
+  @@index([status, kanbanOrder])
+}
+
+model JobNote {
+  id         String   @id @default(cuid())
+  jobId      String
+  body       String   @db.VarChar(1000)
+  authorId   String
+  authorName String
+  createdAt  DateTime @default(now())
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  jobId     String?
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job       Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([userId, read, createdAt])
+  @@index([jobId])
+}
+
+model JobPart {
+  id          String   @id @default(cuid())
+  jobId       String
+  partNumber  Int
+  partNameDe  String
+  partNameEn  String
+  direction   String   @default("H")
+  dentCount   Int?
+  diameter    String?
+  alu25       Boolean  @default(false)
+  pushToPaint Decimal  @default(0) @db.Decimal(5, 2)
+  surcharge15 Boolean  @default(false)
+  damageType    String   @default("hail")
+  rawAw         Decimal? @db.Decimal(10, 4)
+  adjustedAw  Decimal? @db.Decimal(10, 4)
+  totalAmount Decimal? @db.Decimal(10, 2)
+  photos      String[] @default([])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, partNumber])
+}
+
+model MatrixSet {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  isActive    Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  values      MatrixValue[]
+  companies   Company[]
+  jobs        Job[]
+}
+
+model MatrixValue {
+  id          String    @id @default(cuid())
+  matrixSetId String
+  direction   String
+  dentCount   Int
+  diameter    String
+  awValue     Int
+  matrixSet   MatrixSet @relation(fields: [matrixSetId], references: [id], onDelete: Cascade)
+
+  @@unique([matrixSetId, direction, dentCount, diameter])
+}
+
+model TextTemplate {
+  id           String   @id @default(cuid())
+  documentType String
+  language     String   @default("de")
+  greeting     String?
+  bccEmail     String?
+  subject      String?
+  bodyText     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([documentType, language])
+}
+
+model NumberSeries {
+  id         String   @id @default(cuid())
+  seriesType String   @unique
+  prefix     String
+  lastNumber Int      @default(0)
+  padLength  Int      @default(5)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model ImportCheckpoint {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  lastProcessedAt DateTime
+  updatedAt       DateTime @updatedAt
+}
+
+/// Audit trail of user and system actions. `userId` is nullable so system
+/// events (no actor) can still be recorded; the actor is kept on user delete.
+model ActivityLog {
+  id           String         @id @default(cuid())
+  userId       String?
+  action       ActivityAction
+  resourceType String
+  resourceId   String?
+  metadata     Json?
+  createdAt    DateTime       @default(now())
+  user         AppUser?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}

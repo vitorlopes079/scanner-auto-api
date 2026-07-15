@@ -3,15 +3,22 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "postinstall": "prisma generate",
+    "start": "node index.js",
+    "import:manual": "node run-import.js",
+    "import:one": "node run-import-one.js",
+    "inspect:scan": "node inspect-scan.js",
+    "list:scans": "node run-list-scans.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Polls AutoScan API and reports new vs already-processed scans",
+  "description": "Polls AutoScan API and imports scans newer than the saved state timestamp",
   "dependencies": {
+    "@prisma/client": "^5.22.0",
     "axios": "^1.18.1",
     "dotenv": "^17.4.2",
-    "node-cron": "^4.6.0"
+    "node-cron": "^4.6.0",
+    "prisma": "^5.22.0"
   }
 }

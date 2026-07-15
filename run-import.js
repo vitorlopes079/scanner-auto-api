@@ -1,8 +1,8 @@
 const { checkScans } = require('./index');
 
 async function main() {
-  console.log('=== Manual import run (max 20 scans) ===\n');
-  await checkScans({ limit: 20 });
+  console.log('=== Manual state-based import run (max 50 scan attempts) ===\n');
+  await checkScans({ limit: 50 });
 }
 
 main().catch((error) => {

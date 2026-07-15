@@ -1,20 +1,19 @@
 # m4car-apilayer
 
-Simple Node.js service that connects to the AutoScan API, fetches all scans across projects, and reports which ones are new versus already processed.
+Simple Node.js service that connects to the AutoScan API, fetches scans across projects, and imports scans newer than the last processed timestamp.
 
 ## What it does
 
-1. Loads already-processed scan IDs from `processed.json`
+1. Loads `lastProcessedAt` from `state.json`
 2. Calls `GET /api/ext/projects` to list all projects
-3. For each project, calls `GET /api/ext/projects/{projectId}/scans`
-4. Compares each scan ID against `processed.json`
+3. For each project, calls `GET /api/ext/projects/{projectId}/scans` ordered ascending by `scanned`
+4. Skips scans where `scanned <= lastProcessedAt`
 5. Prints a console report:
    - Total scans found
-   - Already processed
+   - Scans at or before `lastProcessedAt`
    - New scans waiting (with ID, registration number, and date when available)
-6. Repeats on a cron schedule every 10 minutes
-
-This project is **read-only** for now: it does not create jobs or mark scans as processed.
+6. Attempts up to 50 new scans per run and imports them into M4Car
+7. Advances `lastProcessedAt` only through the latest contiguous processed scan
 
 ## Setup
 
@@ -35,14 +34,45 @@ AUTOSCAN_BASE_URL=https://autoscan-api-prod.azurewebsites.net
 npm start
 ```
 
-The checker runs once immediately, then every 10 minutes.
+The checker runs as a long-lived process and triggers daily at 06:00 Germany time (`Europe/Berlin`).
 
-## Tracking processed scans
+### Manual scripts
 
-`processed.json` stores an array of scan IDs that have already been handled:
+```bash
+# Import up to 50 new scans (advances ImportCheckpoint)
+npm run import:manual
 
-```json
-[]
+# Import one scan by AutoScan id (does not touch checkpoint)
+npm run import:one -- <autoscanId>
+
+# List all projects/scans vs checkpoint (read-only, no import)
+npm run list:scans
+
+# Fetch and print one AutoScan payload (no M4Car import)
+npm run inspect:scan -- <autoscanId>
 ```
 
-Add scan IDs to this file when they are processed. Until then, they will appear as new in the report.
+### HTTP API (same process as the cron)
+
+Listens on `PORT` (default `3100`):
+
+```bash
+# Health
+curl -s http://localhost:3100/health
+
+# Import one scan (does not touch checkpoint)
+curl -s -X POST http://localhost:3100/import-one \
+  -H "Content-Type: application/json" \
+  -H "x-apilayer-secret: $APILAYER_SECRET" \
+  -d '{"autoscanId":"<id>"}'
+```
+
+Responses use a clear `status`: `created`, `already_imported`, `incomplete`, or `error`.
+
+## Tracking import state
+
+Checkpoint is stored in the M4Car DB table `ImportCheckpoint` (`key: "autoscan"`).
+
+Processed scans include successful imports, already-imported M4Car responses (`409`), and incomplete AutoScan records that are skipped.
+
+Failed scans count toward the 50-attempt run limit, but they do not stop the run. The checkpoint only advances up to the earliest failed scan. For example, if scan 12 fails and scans 13-50 succeed, `lastProcessedAt` remains at scan 11 so the next run retries scan 12 onward.
