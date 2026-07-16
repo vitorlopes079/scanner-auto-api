@@ -182,9 +182,13 @@ function isIncompleteScan(scan) {
 
 function getCreatedLabel(responseData) {
   return (
+    responseData?.data?.quoteNumber ||
     responseData?.quoteNumber ||
+    responseData?.data?.qtNumber ||
     responseData?.qtNumber ||
+    responseData?.data?.number ||
     responseData?.number ||
+    responseData?.data?.id ||
     responseData?.id ||
     'ok'
   );
@@ -375,7 +379,20 @@ async function checkScans({ limit = null } = {}) {
 
     if (projects.length === 0) {
       console.log('[run] No projects found. Nothing to check.');
-      return;
+      return {
+        ok: true,
+        status: 'ok',
+        message: 'No projects found',
+        checkpointLastProcessedAt: state.lastProcessedAt,
+        listTotal: 0,
+        detailFetches: 0,
+        invalidDetails: 0,
+        newScansWaiting: 0,
+        attempts: 0,
+        processedCount: 0,
+        failedCount: 0,
+        remaining: 0,
+      };
     }
 
     const lastProcessedAt = new Date(state.lastProcessedAt);
@@ -454,6 +471,21 @@ async function checkScans({ limit = null } = {}) {
 
     if (newScans.length === 0) {
       console.log('\nNo new scans waiting.');
+      console.log(`\n[run] Finished at ${new Date().toISOString()}`);
+      return {
+        ok: true,
+        status: 'ok',
+        message: 'No new scans waiting',
+        checkpointLastProcessedAt: state.lastProcessedAt,
+        listTotal,
+        detailFetches,
+        invalidDetails,
+        newScansWaiting: 0,
+        attempts: 0,
+        processedCount: 0,
+        failedCount: 0,
+        remaining: 0,
+      };
     } else {
       const batch = limit != null ? newScans.slice(0, limit) : newScans;
       const remaining = newScans.length - batch.length;
@@ -513,9 +545,23 @@ async function checkScans({ limit = null } = {}) {
       console.log(
         `[import] Done. Attempts: ${batch.length}, Processed: ${processedCount}, Failed: ${failedCount}, Remaining after attempted batch: ${remaining}`
       );
-    }
 
-    console.log(`\n[run] Finished at ${new Date().toISOString()}`);
+      console.log(`\n[run] Finished at ${new Date().toISOString()}`);
+      return {
+        ok: failedCount === 0,
+        status: failedCount === 0 ? 'ok' : 'partial_error',
+        message: `Attempts: ${batch.length}, Processed: ${processedCount}, Failed: ${failedCount}, Remaining: ${remaining}`,
+        checkpointLastProcessedAt: state.lastProcessedAt,
+        listTotal,
+        detailFetches,
+        invalidDetails,
+        newScansWaiting: newScans.length,
+        attempts: batch.length,
+        processedCount,
+        failedCount,
+        remaining,
+      };
+    }
   } catch (error) {
     const message = error.response
       ? `${error.response.status} ${error.response.statusText}`
@@ -527,7 +573,38 @@ async function checkScans({ limit = null } = {}) {
     if (error.stack) {
       console.error('[error] Stack:', error.stack);
     }
+    return {
+      ok: false,
+      status: 'error',
+      message,
+    };
   }
+}
+
+async function recordImportBatchLog(result, { limit = null } = {}) {
+  if (!result || typeof result !== 'object') return;
+
+  try {
+    await prisma.autoscanImportBatchLog.create({
+      data: {
+        status: result.status || 'unknown',
+        attempts: Number(result.attempts) || 0,
+        processedCount: Number(result.processedCount) || 0,
+        failedCount: Number(result.failedCount) || 0,
+        remaining: Number(result.remaining) || 0,
+        limit: Number.isInteger(Number(limit)) ? Number(limit) : null,
+        message: typeof result.message === 'string' ? result.message : null,
+      },
+    });
+  } catch (error) {
+    console.error(`[import] Failed to save batch log: ${error.message}`);
+  }
+}
+
+async function runImportBatch({ limit = DAILY_IMPORT_LIMIT } = {}) {
+  const result = await checkScans({ limit });
+  await recordImportBatchLog(result, { limit });
+  return result;
 }
 
 function isIncompleteAnalyzedDate(scan) {
@@ -546,6 +623,18 @@ function cacheFieldsFromScan(summary, detail) {
       summary.chassisNumber ||
       detail.car?.chassisNumber ||
       detail.chassisNumber ||
+      null,
+    make:
+      summary.brand ||
+      summary.make ||
+      detail.car?.brand ||
+      detail.brand ||
+      detail.make ||
+      null,
+    model:
+      summary.model ||
+      detail.car?.model ||
+      detail.model ||
       null,
     scanned: scannedAt,
     isIncomplete: isIncompleteAnalyzedDate(detail),
@@ -807,7 +896,7 @@ function startScheduler() {
   //     console.log('\n[cron] Triggered scheduled import run');
   //
   //     try {
-  //       await checkScans({ limit: DAILY_IMPORT_LIMIT });
+  //       await runImportBatch();
   //     } finally {
   //       isImportRunning = false;
   //     }
@@ -848,6 +937,7 @@ module.exports = {
   checkScans,
   importScan,
   listScans,
+  runImportBatch,
   refreshAutoscanScanCache,
   rebuildAutoscanScanCache,
   startScheduler,
@@ -858,4 +948,3 @@ if (require.main === module) {
   startHttpServer();
   startScheduler();
 }
-

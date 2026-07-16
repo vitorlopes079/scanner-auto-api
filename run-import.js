@@ -1,8 +1,8 @@
-const { checkScans } = require('./index');
+const { runImportBatch } = require('./index');
 
 async function main() {
   console.log('=== Manual state-based import run (max 50 scan attempts) ===\n');
-  await checkScans({ limit: 50 });
+  await runImportBatch();
 }
 
 main().catch((error) => {

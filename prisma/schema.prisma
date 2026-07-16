@@ -108,6 +108,7 @@ model Company {
   repairTimeAwFactor  Decimal    @default(0.02) @db.Decimal(10, 4)
   defaultMatrixSetId  String?
   projectsPerPage     Int        @default(25)
+  autoscanImportBatchLimit Int    @default(50)
   defaultMatrixSet    MatrixSet? @relation(fields: [defaultMatrixSetId], references: [id])
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
@@ -324,11 +325,27 @@ model AutoscanScanCache {
   id                 String    @id // autoscanId
   registrationNumber String?
   chassisNumber      String?
+  make               String?
+  model              String?
   scanned            DateTime?
   isIncomplete       Boolean   @default(false)
   updatedAt          DateTime  @updatedAt
 
   @@index([scanned])
+}
+
+model AutoscanImportBatchLog {
+  id             String   @id @default(cuid())
+  status         String
+  attempts       Int      @default(0)
+  processedCount Int      @default(0)
+  failedCount    Int      @default(0)
+  remaining      Int      @default(0)
+  limit          Int?
+  message        String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 /// Audit trail of user and system actions. `userId` is nullable so system

@@ -1,0 +1,1 @@
+ALTER TABLE "Company" ADD COLUMN "autoscanImportBatchLimit" INTEGER NOT NULL DEFAULT 50;

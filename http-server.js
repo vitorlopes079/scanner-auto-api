@@ -2,6 +2,15 @@ const http = require('http');
 
 const PORT = Number(process.env.PORT || process.env.APILAYER_PORT || 3100);
 const APILAYER_SECRET = process.env.APILAYER_SECRET;
+const DEFAULT_IMPORT_BATCH_LIMIT = 50;
+let isImportBatchRunning = false;
+const importBatchStatus = {
+  running: false,
+  startedAt: null,
+  finishedAt: null,
+  limit: null,
+  lastResult: null,
+};
 
 function sendJson(res, statusCode, body) {
   const payload = JSON.stringify(body);
@@ -112,6 +121,74 @@ async function handleCacheRefresh(req, res) {
   sendJson(res, result.ok ? 200 : 502, result);
 }
 
+async function handleImportBatch(req, res) {
+  if (!assertApilayerSecret(req, res)) return;
+
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    sendJson(res, 400, {
+      ok: false,
+      status: 'error',
+      message: error.message,
+    });
+    return;
+  }
+
+  if (isImportBatchRunning) {
+    sendJson(res, 409, {
+      ok: false,
+      status: 'already_running',
+      message: 'An import batch is already running',
+    });
+    return;
+  }
+
+  const requestedLimit = Number(body.limit);
+  const limit =
+    Number.isInteger(requestedLimit) && requestedLimit > 0
+      ? requestedLimit
+      : DEFAULT_IMPORT_BATCH_LIMIT;
+
+  isImportBatchRunning = true;
+  importBatchStatus.running = true;
+  importBatchStatus.startedAt = new Date().toISOString();
+  importBatchStatus.finishedAt = null;
+  importBatchStatus.limit = limit;
+  importBatchStatus.lastResult = null;
+  console.log(`[http] POST /import-batch limit=${limit}`);
+
+  try {
+    const { runImportBatch } = require('./index');
+    const result = await runImportBatch({ limit });
+    importBatchStatus.lastResult = result || null;
+    sendJson(res, result?.status === 'error' ? 502 : 200, result || {
+      ok: false,
+      status: 'error',
+      message: 'Import batch did not return a result',
+    });
+  } finally {
+    isImportBatchRunning = false;
+    importBatchStatus.running = false;
+    importBatchStatus.finishedAt = new Date().toISOString();
+  }
+}
+
+function handleImportBatchStatus(req, res) {
+  if (!assertApilayerSecret(req, res)) return;
+
+  sendJson(res, 200, {
+    ok: true,
+    status: 'ok',
+    running: importBatchStatus.running,
+    startedAt: importBatchStatus.startedAt,
+    finishedAt: importBatchStatus.finishedAt,
+    limit: importBatchStatus.limit,
+    lastResult: importBatchStatus.lastResult,
+  });
+}
+
 function startHttpServer() {
   const server = http.createServer(async (req, res) => {
     try {
@@ -129,6 +206,16 @@ function startHttpServer() {
 
       if (req.method === 'POST' && url.pathname === '/cache-refresh') {
         await handleCacheRefresh(req, res);
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/import-batch') {
+        await handleImportBatch(req, res);
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/import-batch/status') {
+        handleImportBatchStatus(req, res);
         return;
       }
 
@@ -151,6 +238,8 @@ function startHttpServer() {
     console.log(`[http] Listening on port ${PORT}`);
     console.log(`[http] POST /import-one (header x-apilayer-secret)`);
     console.log(`[http] POST /cache-refresh (header x-apilayer-secret)`);
+    console.log(`[http] POST /import-batch (header x-apilayer-secret)`);
+    console.log(`[http] GET /import-batch/status (header x-apilayer-secret)`);
   });
 
   return server;
