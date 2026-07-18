@@ -9,6 +9,8 @@ const BASE_URL = process.env.AUTOSCAN_BASE_URL;
 const API_KEY = process.env.AUTOSCAN_API_KEY;
 const M4CAR_INTERNAL_URL = process.env.M4CAR_INTERNAL_URL;
 const M4CAR_INTERNAL_SECRET = process.env.M4CAR_INTERNAL_SECRET;
+const M4CAR_STORAGE_URL = process.env.M4CAR_STORAGE_URL;
+const M4CAR_UPLOAD_KEY = process.env.M4CAR_UPLOAD_KEY;
 const PAGE_SIZE = 50;
 const DAILY_IMPORT_LIMIT = 50;
 const CRON_EXPRESSION = '0 6 * * *';
@@ -17,6 +19,7 @@ const CRON_TIMEZONE = 'Europe/Berlin';
 const IMPORT_DELAY_MS = 500;
 const INCOMPLETE_ANALYZED = '0001-01-01T00:00:00+00:00';
 const CHECKPOINT_KEY = 'autoscan';
+const DAMAGE_PHOTO_CATEGORY = 'damages';
 // One-time seed if ImportCheckpoint row is missing (former state.json value).
 const CHECKPOINT_SEED_LAST_PROCESSED_AT = '2026-07-06T16:31:00.000Z';
 
@@ -26,6 +29,8 @@ console.log(`Base URL: ${BASE_URL}`);
 console.log(`API key loaded: ${API_KEY ? `${API_KEY.slice(0, 8)}...` : 'MISSING'}`);
 console.log(`M4Car URL: ${M4CAR_INTERNAL_URL}`);
 console.log(`M4Car secret loaded: ${M4CAR_INTERNAL_SECRET ? 'yes' : 'MISSING'}`);
+console.log(`M4Car storage URL: ${M4CAR_STORAGE_URL || 'MISSING'}`);
+console.log(`M4Car upload key loaded: ${M4CAR_UPLOAD_KEY ? 'yes' : 'MISSING'}`);
 console.log(`Checkpoint: ImportCheckpoint key="${CHECKPOINT_KEY}"`);
 console.log(`Page size: ${PAGE_SIZE}`);
 console.log(`Cache refresh cron: ${CACHE_CRON_EXPRESSION} (${CRON_TIMEZONE})`);
@@ -163,6 +168,144 @@ async function fetchScanDetails(scanId) {
   return data;
 }
 
+function getSnapshotUrl(snapshot) {
+  if (typeof snapshot === 'string') return snapshot;
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  return (
+    snapshot.url ||
+    snapshot.imageUrl ||
+    snapshot.imageURL ||
+    snapshot.snapshotUrl ||
+    snapshot.snapshotURL ||
+    snapshot.uri ||
+    snapshot.href ||
+    null
+  );
+}
+
+function getSnapshotLabel(snapshot, index) {
+  if (snapshot && typeof snapshot === 'object') {
+    return (
+      snapshot.cameraAngle ||
+      snapshot.angle ||
+      snapshot.label ||
+      snapshot.name ||
+      snapshot.type ||
+      `snapshot-${index + 1}`
+    );
+  }
+  return `snapshot-${index + 1}`;
+}
+
+function extensionFromContentType(contentType) {
+  const mime = String(contentType || '').split(';')[0].trim().toLowerCase();
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  return null;
+}
+
+function extensionFromUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(/\.([a-z0-9]+)$/i);
+    const ext = match?.[1]?.toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'webp'].includes(ext)
+      ? ext.replace('jpeg', 'jpg')
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeSnapshotFilename(label, index, ext) {
+  const safeLabel = String(label || `snapshot-${index + 1}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || `snapshot-${index + 1}`;
+  return `autoscan-${safeLabel}-${index + 1}.${ext}`;
+}
+
+async function uploadBufferToM4CarStorage(buffer, contentType, filename) {
+  if (!M4CAR_STORAGE_URL || !M4CAR_UPLOAD_KEY) {
+    throw new Error('M4Car storage config is missing');
+  }
+
+  const form = new FormData();
+  form.append('image', new Blob([buffer], { type: contentType }), filename);
+
+  const response = await axios.post(
+    `${M4CAR_STORAGE_URL.replace(/\/+$/, '')}/upload.php?category=${encodeURIComponent(DAMAGE_PHOTO_CATEGORY)}`,
+    form,
+    {
+      headers: {
+        Authorization: `Bearer ${M4CAR_UPLOAD_KEY}`,
+      },
+      validateStatus: () => true,
+      timeout: 30000,
+    }
+  );
+
+  if (response.status < 200 || response.status >= 300 || !response.data?.url) {
+    throw new Error(`M4Car storage upload failed: HTTP ${response.status} ${JSON.stringify(response.data)}`);
+  }
+
+  return response.data.url;
+}
+
+async function rehostScanSnapshot(snapshot, index) {
+  const url = getSnapshotUrl(snapshot);
+  const label = getSnapshotLabel(snapshot, index);
+  if (!url) {
+    throw new Error(`snapshot ${index + 1} has no URL`);
+  }
+
+  const response = await axios.get(url, {
+    responseType: 'arraybuffer',
+    validateStatus: () => true,
+    timeout: 30000,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`AutoScan snapshot download failed: HTTP ${response.status}`);
+  }
+
+  const contentType =
+    response.headers?.['content-type'] ||
+    response.headers?.['Content-Type'] ||
+    'image/jpeg';
+  const ext = extensionFromContentType(contentType) || extensionFromUrl(url) || 'jpg';
+  const filename = safeSnapshotFilename(label, index, ext);
+
+  return uploadBufferToM4CarStorage(
+    Buffer.from(response.data),
+    contentType,
+    filename
+  );
+}
+
+async function rehostScanPhotos(scan) {
+  const snapshots = Array.isArray(scan?.snapshots) ? scan.snapshots : [];
+  if (snapshots.length === 0) return [];
+
+  const urls = [];
+  for (const [index, snapshot] of snapshots.entries()) {
+    const label = getSnapshotLabel(snapshot, index);
+    try {
+      const url = await rehostScanSnapshot(snapshot, index);
+      urls.push(url);
+      console.log(`[photos] ${scan.id || 'scan'} ${label} → uploaded ${url}`);
+    } catch (error) {
+      console.log(
+        `[photos] ${scan.id || 'scan'} ${label} → skipped (${error.message})`
+      );
+    }
+  }
+
+  return urls;
+}
+
 function isIncompleteScan(scan) {
   if (scan.analyzed === INCOMPLETE_ANALYZED) {
     return 'analyzed date is incomplete (0001-01-01)';
@@ -221,8 +364,14 @@ async function importScan(summaryScan) {
       };
     }
 
+    console.log(`[import] ${label} → rehosting scan photos...`);
+    const scanPhotos = await rehostScanPhotos(fullScan);
+
     console.log(`[import] ${label} → mapping data...`);
-    const payload = mapScanToPayload(fullScan);
+    const payload = {
+      ...mapScanToPayload(fullScan),
+      scanPhotos,
+    };
 
     console.log(`[import] ${label} → posting to M4Car...`);
     const response = await axios.post(
