@@ -4,7 +4,7 @@ async function main() {
   const scanId = process.argv[2];
 
   if (!scanId) {
-    console.error('Usage: npm run import:one -- <autoscanId>');
+    console.error('Usage: npm run import:one -- <autoscanId> [--overwrite]');
     process.exit(1);
   }
 
@@ -12,7 +12,12 @@ async function main() {
   console.log(`Scan id: ${scanId}`);
   console.log('Checkpoint is not updated by this script.\n');
 
-  const result = await importScan({ id: scanId });
+  const overwrite = process.argv.includes('--overwrite');
+  if (overwrite) {
+    console.log('Overwrite: enabled — existing M4Car job values can be replaced.\n');
+  }
+
+  const result = await importScan({ id: scanId }, { overwrite });
   console.log(`[result] status=${result.status} ok=${result.ok} ${result.message}`);
   if (!result.ok) {
     process.exit(1);

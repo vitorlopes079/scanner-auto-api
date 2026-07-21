@@ -97,12 +97,32 @@ function mapPushToPaint(pushToPaint) {
   return pushToPaint ? 50 : 0;
 }
 
-function mapScanToPayload(scan) {
+function buildCorrectionByType(correctionParts) {
+  const correctionByType = new Map();
+
+  if (!Array.isArray(correctionParts)) return correctionByType;
+
+  for (const part of correctionParts) {
+    if (
+      part &&
+      typeof part === 'object' &&
+      typeof part.carPartType === 'string' &&
+      Array.isArray(part.damageCount)
+    ) {
+      correctionByType.set(part.carPartType, part.damageCount);
+    }
+  }
+
+  return correctionByType;
+}
+
+function mapScanToPayload(scan, { correctionParts = null } = {}) {
   const car = scan.car || {};
   const damages = scan.scanResult?.carPartDamages || [];
   const damageByType = Object.fromEntries(
     damages.map((damage) => [damage.carPartType, damage])
   );
+  const correctionByType = buildCorrectionByType(correctionParts);
 
   const parts = ALL_PARTS.map((part) => {
     const autoscanKey = AUTOSCAN_KEY_BY_PART_NUMBER[part.partNumber];
@@ -118,7 +138,10 @@ function mapScanToPayload(scan) {
     }
 
     const damage = damageByType[autoscanKey];
-    const grouped = sumDamageCount(damage?.damageCount || []);
+    const correctedDamageCount = correctionByType.get(autoscanKey);
+    const grouped = sumDamageCount(
+      correctedDamageCount ?? damage?.damageCount ?? []
+    );
     const { dentCount, diameter } = calculateWeightedAverage(grouped);
 
     return {
@@ -149,6 +172,7 @@ module.exports = {
   PANEL_MAP,
   ALL_PARTS,
   SIZE_CLASS_MAP,
+  buildCorrectionByType,
   cleanLicensePlate,
   sumDamageCount,
   calculateWeightedAverage,

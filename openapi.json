@@ -1,0 +1,804 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "M4Car API Layer - AutoScan Corrections",
+    "version": "1.0.0",
+    "description": "Minimal documentation for submitting AutoScan correction payloads. Correction submissions merge by carPartType for each autoscanId; import-time usage is handled separately."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3100",
+      "description": "Local m4car-apilayer server"
+    }
+  ],
+  "paths": {
+    "/scan-corrections": {
+      "post": {
+        "summary": "Submit or overwrite an AutoScan correction",
+        "description": "Stores a correction payload for an AutoScan scan. Authentication uses the x-apilayer-secret header. If a correction already exists for the autoscanId, each submitted carPartType replaces the stored entry for that same carPartType or is appended if new. Stored carPartType entries not included in the new request are preserved unchanged.",
+        "security": [
+          {
+            "ApiLayerSecret": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoscanCorrectionRequest"
+              },
+              "example": {
+                "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                "parts": [
+                  {
+                    "carPartType": "Tailgate",
+                    "damageCount": [
+                      {
+                        "sizeClass": 1,
+                        "count": 2
+                      },
+                      {
+                        "sizeClass": 3,
+                        "count": 1
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing correction merged by carPartType",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoscanCorrectionSuccess"
+                },
+                "example": {
+                  "ok": true,
+                  "status": "updated",
+                  "data": {
+                    "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                    "parts": [
+                      {
+                        "carPartType": "Tailgate",
+                        "damageCount": [
+                          {
+                            "sizeClass": 1,
+                            "count": 2
+                          }
+                        ]
+                      },
+                      {
+                        "carPartType": "RightRearDoor",
+                        "damageCount": [
+                          {
+                            "sizeClass": 2,
+                            "count": 1
+                          }
+                        ]
+                      }
+                    ],
+                    "submittedAt": "2026-07-21T14:42:57.137Z"
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "New correction created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoscanCorrectionSuccess"
+                },
+                "example": {
+                  "ok": true,
+                  "status": "created",
+                  "data": {
+                    "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                    "parts": [
+                      {
+                        "carPartType": "Tailgate",
+                        "damageCount": [
+                          {
+                            "sizeClass": 1,
+                            "count": 2
+                          },
+                          {
+                            "sizeClass": 3,
+                            "count": 1
+                          }
+                        ]
+                      }
+                    ],
+                    "submittedAt": "2026-07-21T14:42:56.438Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "unknownPanel": {
+                    "summary": "Unknown panel",
+                    "value": {
+                      "ok": false,
+                      "status": "error",
+                      "message": "Unknown carPartType \"Unknown\". Must be one of: Bonnet, Roof, RailRoofLeft, LeftFrontWing, LeftFrontDoor, LeftRearDoor, LeftRearWing, Tailgate, RailRoofRight, RightFrontWing, RightFrontDoor, RightRearDoor, RightRearWing"
+                    }
+                  },
+                  "invalidDamageCount": {
+                    "summary": "Invalid size class",
+                    "value": {
+                      "ok": false,
+                      "status": "error",
+                      "message": "parts[0].damageCount[0].sizeClass must be an integer between 1 and 8"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid x-apilayer-secret header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "Unauthorized"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AutoScan Corrections"
+        ]
+      }
+    },
+    "/scan-corrections/{autoscanId}": {
+      "get": {
+        "summary": "Get an AutoScan correction",
+        "description": "Returns the stored correction for an autoscanId. Authentication uses the x-apilayer-secret header.",
+        "security": [
+          {
+            "ApiLayerSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "autoscanId",
+            "in": "path",
+            "required": true,
+            "description": "AutoScan scan id.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "9752c37d-fe62-4c12-93da-692d4df5e926"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Correction found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoscanCorrectionGetSuccess"
+                },
+                "example": {
+                  "ok": true,
+                  "status": "ok",
+                  "data": {
+                    "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                    "parts": [
+                      {
+                        "carPartType": "Tailgate",
+                        "damageCount": [
+                          {
+                            "sizeClass": 1,
+                            "count": 2
+                          },
+                          {
+                            "sizeClass": 3,
+                            "count": 1
+                          }
+                        ]
+                      }
+                    ],
+                    "submittedAt": "2026-07-21T14:42:56.438Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid autoscanId",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "autoscanId is required"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid x-apilayer-secret header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "Unauthorized"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No correction exists for this autoscanId",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "No correction exists for this autoscanId"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AutoScan Corrections"
+        ]
+      }
+    },
+    "/scans": {
+      "get": {
+        "summary": "List AutoScan scan summaries",
+        "description": "Returns raw AutoScan scan summaries across all AutoScan projects. This endpoint does not read or apply AutoscanCorrection data.",
+        "security": [
+          {
+            "ApiLayerSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderBy",
+            "in": "query",
+            "required": false,
+            "description": "Sort direction passed through to the AutoScan project scans endpoint. Defaults to Descending.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Ascending",
+                "Descending"
+              ],
+              "default": "Descending"
+            },
+            "example": "Descending"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scan summaries loaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoscanScanListSuccess"
+                },
+                "example": {
+                  "ok": true,
+                  "status": "ok",
+                  "count": 1,
+                  "data": [
+                    {
+                      "id": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                      "registrationNumber": "39PRT4",
+                      "chassisNumber": "WVWZZZ1KZAW000001",
+                      "projectId": "acc9ef4c-482b-4314-b0cd-b61148764400",
+                      "projectName": "Merel"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid x-apilayer-secret header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "Unauthorized"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "AutoScan upstream request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "Failed to list AutoScan scans"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AutoScan Scans"
+        ]
+      }
+    },
+    "/scans/{autoscanId}": {
+      "get": {
+        "summary": "Get one raw AutoScan scan",
+        "description": "Returns raw AutoScan scan detail by id. This endpoint does not read or apply AutoscanCorrection data.",
+        "security": [
+          {
+            "ApiLayerSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "autoscanId",
+            "in": "path",
+            "required": true,
+            "description": "AutoScan scan id.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "9752c37d-fe62-4c12-93da-692d4df5e926"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scan detail loaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoscanScanDetailSuccess"
+                },
+                "example": {
+                  "ok": true,
+                  "status": "ok",
+                  "data": {
+                    "id": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                    "scanned": "2026-07-21T12:00:00Z",
+                    "analyzed": "2026-07-21T12:05:00Z",
+                    "car": {
+                      "registrationNumber": "39PRT4",
+                      "chasisNumber": "WVWZZZ1KZAW000001",
+                      "brand": "Volkswagen",
+                      "model": "Golf",
+                      "color": "Black"
+                    },
+                    "scanResult": {
+                      "carPartDamages": [
+                        {
+                          "carPartType": "Tailgate",
+                          "damageCount": [
+                            {
+                              "sizeClass": 1,
+                              "count": 2
+                            },
+                            {
+                              "sizeClass": 3,
+                              "count": 1
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid autoscanId",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "autoscanId is required"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid x-apilayer-secret header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "Unauthorized"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "AutoScan scan not found upstream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "404 Not Found"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "AutoScan upstream request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "Failed to fetch AutoScan scan"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AutoScan Scans"
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiLayerSecret": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-apilayer-secret",
+        "description": "Shared secret required by POST /scan-corrections."
+      }
+    },
+    "schemas": {
+      "AutoscanCorrectionRequest": {
+        "type": "object",
+        "required": [
+          "autoscanId",
+          "parts"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "autoscanId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "AutoScan scan id to attach the correction to."
+          },
+          "parts": {
+            "type": "array",
+            "minItems": 1,
+            "description": "One correction entry per mapped panel. Duplicate carPartType values are rejected.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionPart"
+            }
+          }
+        }
+      },
+      "CorrectionPart": {
+        "type": "object",
+        "required": [
+          "carPartType",
+          "damageCount"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "carPartType": {
+            "type": "string",
+            "description": "Mapped AutoScan panel name from PANEL_MAP.",
+            "enum": [
+              "Bonnet",
+              "Roof",
+              "RailRoofLeft",
+              "LeftFrontWing",
+              "LeftFrontDoor",
+              "LeftRearDoor",
+              "LeftRearWing",
+              "Tailgate",
+              "RailRoofRight",
+              "RightFrontWing",
+              "RightFrontDoor",
+              "RightRearDoor",
+              "RightRearWing"
+            ]
+          },
+          "damageCount": {
+            "type": "array",
+            "description": "Empty array is valid and means zero damage for the panel.",
+            "items": {
+              "$ref": "#/components/schemas/DamageCountEntry"
+            }
+          }
+        }
+      },
+      "DamageCountEntry": {
+        "type": "object",
+        "required": [
+          "sizeClass",
+          "count"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sizeClass": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "AutoscanCorrectionSuccess": {
+        "type": "object",
+        "required": [
+          "ok",
+          "status",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated"
+            ]
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "autoscanId",
+              "parts",
+              "submittedAt"
+            ],
+            "properties": {
+              "autoscanId": {
+                "type": "string"
+              },
+              "parts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CorrectionPart"
+                }
+              },
+              "submittedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "status",
+          "message"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": false
+          },
+          "status": {
+            "type": "string",
+            "example": "error"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "AutoscanCorrectionGetSuccess": {
+        "type": "object",
+        "required": [
+          "ok",
+          "status",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "autoscanId",
+              "parts",
+              "submittedAt"
+            ],
+            "properties": {
+              "autoscanId": {
+                "type": "string"
+              },
+              "parts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CorrectionPart"
+                }
+              },
+              "submittedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "AutoscanScanSummary": {
+        "type": "object",
+        "description": "Raw AutoScan scan summary with project metadata added by m4car-apilayer.",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "registrationNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "chassisNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          }
+        }
+      },
+      "AutoscanScanListSuccess": {
+        "type": "object",
+        "required": [
+          "ok",
+          "status",
+          "count",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "count": {
+            "type": "integer",
+            "example": 1
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoscanScanSummary"
+            }
+          }
+        }
+      },
+      "AutoscanScanDetail": {
+        "type": "object",
+        "description": "Raw AutoScan scan detail payload. Shape is owned by AutoScan and passed through by m4car-apilayer.",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scanned": {
+            "type": "string",
+            "nullable": true
+          },
+          "analyzed": {
+            "type": "string",
+            "nullable": true
+          },
+          "car": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "scanResult": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "AutoscanScanDetailSuccess": {
+        "type": "object",
+        "required": [
+          "ok",
+          "status",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AutoscanScanDetail"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "AutoScan Corrections",
+      "description": "Store and read correction payloads saved by m4car-apilayer."
+    },
+    {
+      "name": "AutoScan Scans",
+      "description": "Read raw AutoScan scan summaries and scan details without correction data."
+    }
+  ]
+}

@@ -321,6 +321,12 @@ model ImportCheckpoint {
   updatedAt       DateTime @updatedAt
 }
 
+model AutoscanCorrection {
+  autoscanId  String   @id
+  parts       Json
+  submittedAt DateTime @default(now())
+}
+
 /// Cached AutoScan timestamps for admin UI sorting (filled by m4car-apilayer hourly job).
 model AutoscanScanCache {
   id                 String    @id // autoscanId

@@ -22,6 +22,7 @@
     "axios": "^1.18.1",
     "dotenv": "^17.4.2",
     "node-cron": "^4.6.0",
-    "prisma": "^5.22.0"
+    "prisma": "^5.22.0",
+    "swagger-ui-dist": "^5.32.10"
   }
 }

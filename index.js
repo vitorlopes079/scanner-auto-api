@@ -168,6 +168,32 @@ async function fetchScanDetails(scanId) {
   return data;
 }
 
+async function listAutoscanScans({ orderBy = 'Descending' } = {}) {
+  const projects = await fetchProjects();
+  const allScans = [];
+
+  for (const [index, project] of projects.entries()) {
+    console.log(
+      `[http] Fetching scans for project ${index + 1}/${projects.length}: ${project.name}`
+    );
+    const scans = await fetchScans(project.id, project.name, { orderBy });
+
+    for (const scan of scans) {
+      allScans.push({
+        ...scan,
+        projectId: project.id,
+        projectName: project.name,
+      });
+    }
+  }
+
+  return allScans;
+}
+
+async function getAutoscanScan(scanId) {
+  return fetchScanDetails(scanId);
+}
+
 function getSnapshotUrl(snapshot) {
   if (typeof snapshot === 'string') return snapshot;
   if (!snapshot || typeof snapshot !== 'object') return null;
@@ -337,7 +363,7 @@ function getCreatedLabel(responseData) {
   );
 }
 
-async function importScan(summaryScan) {
+async function importScan(summaryScan, { overwrite = false } = {}) {
   const label = summaryScan.registrationNumber || summaryScan.id;
 
   try {
@@ -367,10 +393,36 @@ async function importScan(summaryScan) {
     console.log(`[import] ${label} → rehosting scan photos...`);
     const scanPhotos = await rehostScanPhotos(fullScan);
 
+    const correction = await prisma.autoscanCorrection.findUnique({
+      where: { autoscanId: fullScan.id },
+      select: { parts: true },
+    });
+    const correctionParts = Array.isArray(correction?.parts)
+      ? correction.parts
+      : [];
+
+    if (correctionParts.length > 0) {
+      const correctedPanelNames = correctionParts
+        .map((part) =>
+          part &&
+          typeof part === 'object' &&
+          typeof part.carPartType === 'string'
+            ? part.carPartType
+            : null
+        )
+        .filter(Boolean);
+      if (correctedPanelNames.length > 0) {
+        console.log(
+          `[import] ${fullScan.id} → applied correction for: ${correctedPanelNames.join(', ')}`
+        );
+      }
+    }
+
     console.log(`[import] ${label} → mapping data...`);
     const payload = {
-      ...mapScanToPayload(fullScan),
+      ...mapScanToPayload(fullScan, { correctionParts }),
       scanPhotos,
+      overwrite,
     };
 
     console.log(`[import] ${label} → posting to M4Car...`);
@@ -396,6 +448,19 @@ async function importScan(summaryScan) {
         created,
         m4carStatus: 201,
         message: `created ${created}`,
+      };
+    }
+
+    if (response.status === 200 && response.data?.overwritten === true) {
+      const overwritten = getCreatedLabel(response.data);
+      console.log(`[import] ${label} → ✓ overwritten ${overwritten}`);
+      return {
+        ok: true,
+        status: 'overwritten',
+        autoscanId: summaryScan.id,
+        created: overwritten,
+        m4carStatus: 200,
+        message: `overwritten ${overwritten}`,
       };
     }
 
@@ -1085,6 +1150,8 @@ function startScheduler() {
 module.exports = {
   checkScans,
   importScan,
+  getAutoscanScan,
+  listAutoscanScans,
   listScans,
   runImportBatch,
   refreshAutoscanScanCache,
