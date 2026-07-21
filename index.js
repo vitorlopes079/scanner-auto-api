@@ -332,6 +332,28 @@ async function rehostScanPhotos(scan) {
   return urls;
 }
 
+async function refreshScanPhotos(autoscanId) {
+  const cleanAutoscanId =
+    typeof autoscanId === 'string' ? autoscanId.trim() : '';
+  if (!cleanAutoscanId) {
+    throw new Error('autoscanId is required');
+  }
+
+  console.log(`[photos] ${cleanAutoscanId} → fetching full scan live...`);
+  const fullScan = await fetchScanDetails(cleanAutoscanId);
+
+  console.log(`[photos] ${cleanAutoscanId} → rehosting scan photos...`);
+  const scanPhotos = await rehostScanPhotos(fullScan);
+
+  return {
+    ok: true,
+    status: 'photos_refreshed',
+    autoscanId: cleanAutoscanId,
+    scanPhotos,
+    photoCount: scanPhotos.length,
+  };
+}
+
 function isIncompleteScan(scan) {
   if (scan.analyzed === INCOMPLETE_ANALYZED) {
     return 'analyzed date is incomplete (0001-01-01)';
@@ -1150,6 +1172,7 @@ function startScheduler() {
 module.exports = {
   checkScans,
   importScan,
+  refreshScanPhotos,
   getAutoscanScan,
   listAutoscanScans,
   listScans,

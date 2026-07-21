@@ -218,6 +218,53 @@ async function handleImportOne(req, res) {
   sendJson(res, httpStatusForResult(result), result);
 }
 
+async function handleScanPhotosRefresh(req, res) {
+  if (!assertApilayerSecret(req, res)) return;
+
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    sendJson(res, 400, {
+      ok: false,
+      status: 'error',
+      message: error.message,
+    });
+    return;
+  }
+
+  const autoscanId =
+    typeof body.autoscanId === 'string' ? body.autoscanId.trim() : '';
+  if (!autoscanId) {
+    sendJson(res, 400, {
+      ok: false,
+      status: 'error',
+      message: 'autoscanId is required',
+    });
+    return;
+  }
+
+  try {
+    const { refreshScanPhotos } = require('./index');
+    console.log(`[http] POST /scan-photos-refresh autoscanId=${autoscanId}`);
+    const result = await refreshScanPhotos(autoscanId);
+    sendJson(res, 200, result);
+  } catch (error) {
+    const status = Number(error?.response?.status);
+    const message = messageForExternalError(
+      error,
+      'Failed to refresh AutoScan photos'
+    );
+    console.error(`[http] POST /scan-photos-refresh failed: ${message}`);
+    sendJson(res, status === 404 ? 404 : 502, {
+      ok: false,
+      status: 'error',
+      autoscanId,
+      message,
+    });
+  }
+}
+
 function validationError(message) {
   return {
     ok: false,
@@ -622,6 +669,11 @@ function startHttpServer() {
         return;
       }
 
+      if (req.method === 'POST' && url.pathname === '/scan-photos-refresh') {
+        await handleScanPhotosRefresh(req, res);
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === '/scan-corrections') {
         await handleScanCorrections(req, res);
         return;
@@ -679,6 +731,7 @@ function startHttpServer() {
     console.log(`[http] GET /docs`);
     console.log(`[http] GET /openapi.json`);
     console.log(`[http] POST /import-one (header x-apilayer-secret)`);
+    console.log(`[http] POST /scan-photos-refresh (header x-apilayer-secret)`);
     console.log(`[http] POST /scan-corrections (header x-apilayer-secret)`);
     console.log(`[http] GET /scan-corrections/{autoscanId} (header x-apilayer-secret)`);
     console.log(`[http] GET /scans (header x-apilayer-secret)`);
