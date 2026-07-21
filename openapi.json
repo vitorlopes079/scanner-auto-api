@@ -7,6 +7,10 @@
   },
   "servers": [
     {
+      "url": "https://autoscanner.m4car.com",
+      "description": "Production m4car-apilayer server"
+    },
+    {
       "url": "http://localhost:3100",
       "description": "Local m4car-apilayer server"
     }
