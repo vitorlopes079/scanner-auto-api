@@ -368,11 +368,11 @@ function validateAutoscanCorrectionBody(body) {
         };
       }
 
-      if (!Number.isInteger(damage.count) || damage.count < 0) {
+      if (!Number.isInteger(damage.count)) {
         return {
           ok: false,
           response: validationError(
-            `parts[${partIndex}].damageCount[${damageIndex}].count must be a non-negative integer`
+            `parts[${partIndex}].damageCount[${damageIndex}].count must be an integer`
           ),
         };
       }
@@ -480,6 +480,95 @@ async function handleGetScanCorrection(req, res, autoscanId) {
     ok: true,
     status: 'ok',
     data: correction,
+  });
+}
+
+async function handleDeleteScanCorrectionPart(req, res, autoscanId, carPartType) {
+  if (!assertApilayerSecret(req, res)) return;
+
+  const normalizedAutoscanId =
+    typeof autoscanId === 'string' ? decodeURIComponent(autoscanId).trim() : '';
+  const normalizedCarPartType =
+    typeof carPartType === 'string' ? decodeURIComponent(carPartType).trim() : '';
+
+  if (!normalizedAutoscanId) {
+    sendJson(res, 400, validationError('autoscanId is required'));
+    return;
+  }
+
+  if (!normalizedCarPartType) {
+    sendJson(res, 400, validationError('carPartType is required'));
+    return;
+  }
+
+  const correction = await prisma.autoscanCorrection.findUnique({
+    where: { autoscanId: normalizedAutoscanId },
+    select: { autoscanId: true, parts: true, submittedAt: true },
+  });
+
+  if (!correction) {
+    sendJson(res, 404, {
+      ok: false,
+      status: 'error',
+      message: 'No correction exists for this autoscanId',
+    });
+    return;
+  }
+
+  const parts = Array.isArray(correction.parts) ? correction.parts : [];
+  const remainingParts = parts.filter(
+    (part) =>
+      !(
+        part &&
+        typeof part === 'object' &&
+        typeof part.carPartType === 'string' &&
+        part.carPartType === normalizedCarPartType
+      )
+  );
+
+  if (remainingParts.length === parts.length) {
+    sendJson(res, 404, {
+      ok: false,
+      status: 'error',
+      message: 'No correction exists for this carPartType on this autoscanId',
+    });
+    return;
+  }
+
+  if (remainingParts.length === 0) {
+    await prisma.autoscanCorrection.delete({
+      where: { autoscanId: normalizedAutoscanId },
+    });
+    console.log(
+      `[http] DELETE /scan-corrections autoscanId=${normalizedAutoscanId} carPartType=${normalizedCarPartType} deletedRow=true`
+    );
+    sendJson(res, 200, {
+      ok: true,
+      status: 'deleted',
+      autoscanId: normalizedAutoscanId,
+      carPartType: normalizedCarPartType,
+      data: null,
+    });
+    return;
+  }
+
+  const saved = await prisma.autoscanCorrection.update({
+    where: { autoscanId: normalizedAutoscanId },
+    data: {
+      parts: remainingParts,
+      submittedAt: new Date(),
+    },
+  });
+
+  console.log(
+    `[http] DELETE /scan-corrections autoscanId=${normalizedAutoscanId} carPartType=${normalizedCarPartType} remainingParts=${remainingParts.length}`
+  );
+  sendJson(res, 200, {
+    ok: true,
+    status: 'updated',
+    autoscanId: normalizedAutoscanId,
+    carPartType: normalizedCarPartType,
+    data: saved,
   });
 }
 
@@ -676,6 +765,19 @@ function startHttpServer() {
 
       if (req.method === 'POST' && url.pathname === '/scan-corrections') {
         await handleScanCorrections(req, res);
+        return;
+      }
+
+      const scanCorrectionPartMatch = url.pathname.match(
+        /^\/scan-corrections\/([^/]+)\/([^/]+)$/
+      );
+      if (req.method === 'DELETE' && scanCorrectionPartMatch) {
+        await handleDeleteScanCorrectionPart(
+          req,
+          res,
+          scanCorrectionPartMatch[1],
+          scanCorrectionPartMatch[2]
+        );
         return;
       }
 

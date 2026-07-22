@@ -32,23 +32,82 @@
               "schema": {
                 "$ref": "#/components/schemas/AutoscanCorrectionRequest"
               },
-              "example": {
-                "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
-                "parts": [
-                  {
-                    "carPartType": "Tailgate",
-                    "damageCount": [
+              "examples": {
+                "basic": {
+                  "summary": "Simple correction",
+                  "value": {
+                    "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                    "parts": [
                       {
-                        "sizeClass": 1,
-                        "count": 2
-                      },
-                      {
-                        "sizeClass": 3,
-                        "count": 1
+                        "carPartType": "Tailgate",
+                        "damageCount": [
+                          {
+                            "sizeClass": 1,
+                            "count": 2
+                          },
+                          {
+                            "sizeClass": 3,
+                            "count": 1
+                          }
+                        ]
                       }
                     ]
                   }
-                ]
+                },
+                "portalCorrectionLine": {
+                  "summary": "Portal correction line with duplicate sizeClass entries",
+                  "description": "This raw Tailgate correction is preserved as submitted and nets to sizeClass 2 count 3 at import time.",
+                  "value": {
+                    "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                    "parts": [
+                      {
+                        "carPartType": "Tailgate",
+                        "damageCount": [
+                          {
+                            "sizeClass": 1,
+                            "count": 4
+                          },
+                          {
+                            "sizeClass": 2,
+                            "count": 2
+                          },
+                          {
+                            "sizeClass": 3,
+                            "count": 2
+                          },
+                          {
+                            "sizeClass": 7,
+                            "count": 1
+                          },
+                          {
+                            "sizeClass": 8,
+                            "count": 5
+                          },
+                          {
+                            "sizeClass": 1,
+                            "count": -4
+                          },
+                          {
+                            "sizeClass": 2,
+                            "count": 1
+                          },
+                          {
+                            "sizeClass": 3,
+                            "count": -2
+                          },
+                          {
+                            "sizeClass": 7,
+                            "count": -1
+                          },
+                          {
+                            "sizeClass": 8,
+                            "count": -5
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
@@ -270,6 +329,163 @@
                   "ok": false,
                   "status": "error",
                   "message": "No correction exists for this autoscanId"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AutoScan Corrections"
+        ]
+      }
+    },
+    "/scan-corrections/{autoscanId}/{carPartType}": {
+      "delete": {
+        "summary": "Delete one panel correction",
+        "description": "Removes the stored correction for one carPartType on one AutoScan scan. Other panel corrections on the same autoscanId are preserved. If this removes the last panel correction, the entire AutoscanCorrection row is deleted.",
+        "security": [
+          {
+            "ApiLayerSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "autoscanId",
+            "in": "path",
+            "required": true,
+            "description": "AutoScan scan id.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "9752c37d-fe62-4c12-93da-692d4df5e926"
+          },
+          {
+            "name": "carPartType",
+            "in": "path",
+            "required": true,
+            "description": "Mapped AutoScan panel name from PANEL_MAP.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Bonnet",
+                "Roof",
+                "RailRoofLeft",
+                "LeftFrontWing",
+                "LeftFrontDoor",
+                "LeftRearDoor",
+                "LeftRearWing",
+                "Tailgate",
+                "RailRoofRight",
+                "RightFrontWing",
+                "RightFrontDoor",
+                "RightRearDoor",
+                "RightRearWing"
+              ]
+            },
+            "example": "Tailgate"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Panel correction deleted. If other panel corrections remain, data contains the updated correction row; if the deleted panel was the last one, data is null and status is deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoscanCorrectionDeleteSuccess"
+                },
+                "examples": {
+                  "updatedRecord": {
+                    "summary": "Other panels remain",
+                    "value": {
+                      "ok": true,
+                      "status": "updated",
+                      "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                      "carPartType": "Tailgate",
+                      "data": {
+                        "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                        "parts": [
+                          {
+                            "carPartType": "RightRearDoor",
+                            "damageCount": [
+                              {
+                                "sizeClass": 2,
+                                "count": 1
+                              }
+                            ]
+                          }
+                        ],
+                        "submittedAt": "2026-07-21T14:43:10.137Z"
+                      }
+                    }
+                  },
+                  "deletedRow": {
+                    "summary": "Last panel removed",
+                    "value": {
+                      "ok": true,
+                      "status": "deleted",
+                      "autoscanId": "9752c37d-fe62-4c12-93da-692d4df5e926",
+                      "carPartType": "Tailgate",
+                      "data": null
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid autoscanId or carPartType",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "carPartType is required"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid x-apilayer-secret header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "status": "error",
+                  "message": "Unauthorized"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No correction exists for this autoscanId, or no correction exists for this carPartType on this autoscanId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "missingScanCorrection": {
+                    "summary": "No correction row",
+                    "value": {
+                      "ok": false,
+                      "status": "error",
+                      "message": "No correction exists for this autoscanId"
+                    }
+                  },
+                  "missingPanelCorrection": {
+                    "summary": "No panel correction",
+                    "value": {
+                      "ok": false,
+                      "status": "error",
+                      "message": "No correction exists for this carPartType on this autoscanId"
+                    }
+                  }
                 }
               }
             }
@@ -561,7 +777,7 @@
           },
           "damageCount": {
             "type": "array",
-            "description": "Empty array is valid and means zero damage for the panel.",
+            "description": "Empty array is valid and means zero damage for the panel. Multiple entries for the same sizeClass are supported, including negative counts; entries are net-summed at import time.",
             "items": {
               "$ref": "#/components/schemas/DamageCountEntry"
             }
@@ -583,7 +799,7 @@
           },
           "count": {
             "type": "integer",
-            "minimum": 0
+            "description": "Signed integer count. Negative values are supported for portal correction lines and are net-summed with duplicate sizeClass entries at import time."
           }
         }
       },
@@ -670,6 +886,59 @@
           },
           "data": {
             "type": "object",
+            "required": [
+              "autoscanId",
+              "parts",
+              "submittedAt"
+            ],
+            "properties": {
+              "autoscanId": {
+                "type": "string"
+              },
+              "parts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CorrectionPart"
+                }
+              },
+              "submittedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "AutoscanCorrectionDeleteSuccess": {
+        "type": "object",
+        "required": [
+          "ok",
+          "status",
+          "autoscanId",
+          "carPartType",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "updated",
+              "deleted"
+            ]
+          },
+          "autoscanId": {
+            "type": "string"
+          },
+          "carPartType": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "nullable": true,
             "required": [
               "autoscanId",
               "parts",
