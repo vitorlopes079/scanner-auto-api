@@ -46,6 +46,27 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function recordAutoscanLog(autoscanId, eventType, message, metadata = null) {
+  const cleanAutoscanId =
+    typeof autoscanId === 'string' ? autoscanId.trim() : '';
+  if (!cleanAutoscanId || !eventType || !message) return;
+
+  try {
+    await prisma.autoscanLog.create({
+      data: {
+        autoscanId: cleanAutoscanId,
+        eventType,
+        message,
+        metadata,
+      },
+    });
+  } catch (error) {
+    console.error(
+      `[autoscan-log] Failed to write ${eventType} for ${cleanAutoscanId}: ${error.message}`
+    );
+  }
+}
+
 async function loadCheckpoint() {
   try {
     const row = await prisma.importCheckpoint.findUnique({
@@ -387,6 +408,13 @@ function getCreatedLabel(responseData) {
 
 async function importScan(summaryScan, { overwrite = false } = {}) {
   const label = summaryScan.registrationNumber || summaryScan.id;
+  const autoscanId = summaryScan.id;
+  await recordAutoscanLog(
+    autoscanId,
+    'import_started',
+    'AutoScan import started',
+    { overwrite }
+  );
 
   try {
     // List endpoint has no `scanned`; checkScans may already attach full detail.
@@ -397,12 +425,24 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
       console.log(`[import] ${label} → using prefetched scan detail...`);
     } else {
       console.log(`[import] ${label} → fetching full scan...`);
+      await recordAutoscanLog(
+        autoscanId,
+        'scan_fetch_attempted',
+        'Fetching full AutoScan detail',
+        { source: 'autoscan' }
+      );
       fullScan = await fetchScanDetails(summaryScan.id);
     }
 
     const incompleteReason = isIncompleteScan(fullScan);
     if (incompleteReason) {
       console.log(`[import] ${label} → skipped (incomplete: ${incompleteReason})`);
+      await recordAutoscanLog(
+        fullScan.id || autoscanId,
+        'incomplete_skip',
+        `Skipped incomplete scan: ${incompleteReason}`,
+        { reason: incompleteReason }
+      );
       return {
         ok: true,
         status: 'incomplete',
@@ -413,7 +453,21 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
     }
 
     console.log(`[import] ${label} → rehosting scan photos...`);
+    const snapshotCount = Array.isArray(fullScan?.snapshots)
+      ? fullScan.snapshots.length
+      : 0;
     const scanPhotos = await rehostScanPhotos(fullScan);
+    await recordAutoscanLog(
+      fullScan.id || autoscanId,
+      'photos_rehosted',
+      `Rehosted ${scanPhotos.length}/${snapshotCount} scan photos`,
+      {
+        snapshotCount,
+        successCount: scanPhotos.length,
+        failedCount: Math.max(0, snapshotCount - scanPhotos.length),
+        scanPhotos,
+      }
+    );
 
     const correction = await prisma.autoscanCorrection.findUnique({
       where: { autoscanId: fullScan.id },
@@ -436,6 +490,15 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
       if (correctedPanelNames.length > 0) {
         console.log(
           `[import] ${fullScan.id} → applied correction for: ${correctedPanelNames.join(', ')}`
+        );
+        await recordAutoscanLog(
+          fullScan.id || autoscanId,
+          'correction_applied',
+          `Applied correction for ${correctedPanelNames.join(', ')}`,
+          {
+            panelNames: correctedPanelNames,
+            partCount: correctedPanelNames.length,
+          }
         );
       }
     }
@@ -463,6 +526,16 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
     if (response.status === 201) {
       const created = getCreatedLabel(response.data);
       console.log(`[import] ${label} → ✓ created ${created}`);
+      await recordAutoscanLog(
+        fullScan.id || autoscanId,
+        'import_completed',
+        `Import completed: created ${created}`,
+        {
+          status: 'created',
+          quoteNumber: created === 'ok' ? null : created,
+          m4carStatus: 201,
+        }
+      );
       return {
         ok: true,
         status: 'created',
@@ -476,6 +549,16 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
     if (response.status === 200 && response.data?.overwritten === true) {
       const overwritten = getCreatedLabel(response.data);
       console.log(`[import] ${label} → ✓ overwritten ${overwritten}`);
+      await recordAutoscanLog(
+        fullScan.id || autoscanId,
+        'import_completed',
+        `Import completed: overwritten ${overwritten}`,
+        {
+          status: 'overwritten',
+          quoteNumber: overwritten === 'ok' ? null : overwritten,
+          m4carStatus: 200,
+        }
+      );
       return {
         ok: true,
         status: 'overwritten',
@@ -488,6 +571,15 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
 
     if (response.status === 409) {
       console.log(`[import] ${label} → already imported, skipping`);
+      await recordAutoscanLog(
+        fullScan.id || autoscanId,
+        'import_completed',
+        'Scan already imported, skipping',
+        {
+          status: 'already_imported',
+          m4carStatus: 409,
+        }
+      );
       return {
         ok: true,
         status: 'already_imported',
@@ -502,6 +594,15 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
         ? response.data
         : JSON.stringify(response.data) || response.statusText;
     console.log(`[import] ${label} → ✗ failed: HTTP ${response.status} ${errorMessage}`);
+    await recordAutoscanLog(
+      fullScan.id || autoscanId,
+      'import_failed',
+      `Import failed: HTTP ${response.status} ${errorMessage}`,
+      {
+        m4carStatus: response.status,
+        response: response.data ?? null,
+      }
+    );
     return {
       ok: false,
       status: 'error',
@@ -514,6 +615,14 @@ async function importScan(summaryScan, { overwrite = false } = {}) {
       ? `${error.response.status} ${JSON.stringify(error.response.data) || error.response.statusText}`
       : error.message;
     console.log(`[import] ${label} → ✗ failed: ${message}`);
+    await recordAutoscanLog(
+      autoscanId,
+      'import_failed',
+      `Import failed: ${message}`,
+      {
+        error: message,
+      }
+    );
     return {
       ok: false,
       status: 'error',
@@ -659,6 +768,12 @@ async function checkScans({ limit = null } = {}) {
             ? `${error.response.status} ${error.response.statusText}`
             : error.message;
           console.log(`[run] Detail-fetch failed for ${summary.id}: ${message}`);
+          await recordAutoscanLog(
+            summary.id,
+            'import_failed',
+            `Detail fetch failed: ${message}`,
+            { stage: 'detail_fetch', error: message }
+          );
           invalidDetails += 1;
           continue;
         }
@@ -667,6 +782,12 @@ async function checkScans({ limit = null } = {}) {
         if (!scannedAt) {
           console.log(
             `  [scan] ${detail.id} | scanned: ${detail.scanned || 'N/A'} | reg: ${summary.registrationNumber || 'N/A'} | INVALID`
+          );
+          await recordAutoscanLog(
+            detail.id || summary.id,
+            'import_failed',
+            'Invalid scanned date in AutoScan detail',
+            { stage: 'detail_fetch', scanned: detail.scanned || null }
           );
           invalidDetails += 1;
           continue;
@@ -735,6 +856,12 @@ async function checkScans({ limit = null } = {}) {
         const scannedAt = parseScanDate(scan);
         if (!scannedAt) {
           console.log(`[import] ${scan.registrationNumber || scan.id} → ✗ failed: invalid scanned date ${scan.scanned}`);
+          await recordAutoscanLog(
+            scan.id,
+            'import_failed',
+            `Invalid scanned date: ${scan.scanned}`,
+            { stage: 'batch_import', scanned: scan.scanned || null }
+          );
           failedCount += 1;
           outcomes.push({ scan, scannedAt: null, processed: false });
           continue;

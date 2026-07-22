@@ -273,6 +273,27 @@ function validationError(message) {
   };
 }
 
+async function recordAutoscanLog(autoscanId, eventType, message, metadata = null) {
+  const cleanAutoscanId =
+    typeof autoscanId === 'string' ? autoscanId.trim() : '';
+  if (!cleanAutoscanId || !eventType || !message) return;
+
+  try {
+    await prisma.autoscanLog.create({
+      data: {
+        autoscanId: cleanAutoscanId,
+        eventType,
+        message,
+        metadata,
+      },
+    });
+  } catch (error) {
+    console.error(
+      `[autoscan-log] Failed to write ${eventType} for ${cleanAutoscanId}: ${error.message}`
+    );
+  }
+}
+
 function validateAutoscanCorrectionBody(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return {
@@ -445,6 +466,17 @@ async function handleScanCorrections(req, res) {
   console.log(
     `[http] POST /scan-corrections autoscanId=${validation.autoscanId} submittedParts=${validation.parts.length} savedParts=${mergedParts.length}`
   );
+  await recordAutoscanLog(
+    validation.autoscanId,
+    'correction_submitted',
+    `Correction submitted for ${validation.parts.map((part) => part.carPartType).join(', ')}`,
+    {
+      submittedPanels: validation.parts.map((part) => part.carPartType),
+      submittedParts: validation.parts.length,
+      savedParts: mergedParts.length,
+      rawParts: validation.parts,
+    }
+  );
   sendJson(res, existing ? 200 : 201, {
     ok: true,
     status: existing ? 'updated' : 'created',
@@ -542,6 +574,16 @@ async function handleDeleteScanCorrectionPart(req, res, autoscanId, carPartType)
     console.log(
       `[http] DELETE /scan-corrections autoscanId=${normalizedAutoscanId} carPartType=${normalizedCarPartType} deletedRow=true`
     );
+    await recordAutoscanLog(
+      normalizedAutoscanId,
+      'correction_deleted',
+      `Correction removed for ${normalizedCarPartType}`,
+      {
+        carPartType: normalizedCarPartType,
+        deletedRow: true,
+        remainingParts: 0,
+      }
+    );
     sendJson(res, 200, {
       ok: true,
       status: 'deleted',
@@ -562,6 +604,16 @@ async function handleDeleteScanCorrectionPart(req, res, autoscanId, carPartType)
 
   console.log(
     `[http] DELETE /scan-corrections autoscanId=${normalizedAutoscanId} carPartType=${normalizedCarPartType} remainingParts=${remainingParts.length}`
+  );
+  await recordAutoscanLog(
+    normalizedAutoscanId,
+    'correction_deleted',
+    `Correction removed for ${normalizedCarPartType}`,
+    {
+      carPartType: normalizedCarPartType,
+      deletedRow: false,
+      remainingParts: remainingParts.length,
+    }
   );
   sendJson(res, 200, {
     ok: true,

@@ -355,6 +355,18 @@ model AutoscanImportBatchLog {
   @@index([createdAt])
 }
 
+model AutoscanLog {
+  id         String   @id @default(cuid())
+  autoscanId String
+  eventType  String
+  message    String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([autoscanId, createdAt])
+  @@index([eventType, createdAt])
+}
+
 /// Audit trail of user and system actions. `userId` is nullable so system
 /// events (no actor) can still be recorded; the actor is kept on user delete.
 model ActivityLog {
