@@ -17,7 +17,10 @@ const importBatchStatus = {
   running: false,
   startedAt: null,
   finishedAt: null,
+  mode: null,
   limit: null,
+  total: null,
+  completed: 0,
   lastResult: null,
 };
 
@@ -746,7 +749,10 @@ async function handleImportBatch(req, res) {
   importBatchStatus.running = true;
   importBatchStatus.startedAt = new Date().toISOString();
   importBatchStatus.finishedAt = null;
+  importBatchStatus.mode = 'automatic';
   importBatchStatus.limit = limit;
+  importBatchStatus.total = limit;
+  importBatchStatus.completed = 0;
   importBatchStatus.lastResult = null;
   console.log(`[http] POST /import-batch limit=${limit}`);
 
@@ -754,6 +760,7 @@ async function handleImportBatch(req, res) {
     const { runImportBatch } = require('./index');
     const result = await runImportBatch({ limit });
     importBatchStatus.lastResult = result || null;
+    importBatchStatus.completed = Number(result?.attempts) || 0;
     sendJson(res, result?.status === 'error' ? 502 : 200, result || {
       ok: false,
       status: 'error',
@@ -766,6 +773,112 @@ async function handleImportBatch(req, res) {
   }
 }
 
+async function handleImportSelected(req, res) {
+  if (!assertApilayerSecret(req, res)) return;
+
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    sendJson(res, 400, {
+      ok: false,
+      status: 'error',
+      message: error.message,
+    });
+    return;
+  }
+
+  const rawIds = Array.isArray(body?.autoscanIds) ? body.autoscanIds : [];
+  const autoscanIds = [
+    ...new Set(
+      rawIds
+        .filter((value) => typeof value === 'string')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    ),
+  ];
+
+  if (autoscanIds.length === 0) {
+    sendJson(res, 400, {
+      ok: false,
+      status: 'error',
+      message: 'autoscanIds must contain at least one scan id',
+    });
+    return;
+  }
+
+  if (rawIds.length > 25 || autoscanIds.length > 25) {
+    sendJson(res, 400, {
+      ok: false,
+      status: 'error',
+      message: 'A selected import can contain at most 25 scan ids',
+    });
+    return;
+  }
+
+  if (isImportBatchRunning) {
+    sendJson(res, 409, {
+      ok: false,
+      status: 'already_running',
+      message: 'An import batch is already running',
+    });
+    return;
+  }
+
+  isImportBatchRunning = true;
+  importBatchStatus.running = true;
+  importBatchStatus.startedAt = new Date().toISOString();
+  importBatchStatus.finishedAt = null;
+  importBatchStatus.mode = 'selected';
+  importBatchStatus.limit = autoscanIds.length;
+  importBatchStatus.total = autoscanIds.length;
+  importBatchStatus.completed = 0;
+  importBatchStatus.lastResult = null;
+
+  console.log(`[http] POST /import-selected count=${autoscanIds.length}`);
+
+  const { runSelectedImportBatch } = require('./index');
+  void runSelectedImportBatch({
+    autoscanIds,
+    onProgress(completed) {
+      importBatchStatus.completed = completed;
+    },
+  })
+    .then((result) => {
+      importBatchStatus.lastResult = result || null;
+    })
+    .catch((error) => {
+      const message =
+        error instanceof Error ? error.message : 'Selected import batch failed';
+      console.error(`[http] Selected import batch failed: ${message}`);
+      importBatchStatus.lastResult = {
+        ok: false,
+        status: 'error',
+        message,
+        attempts: autoscanIds.length,
+        processedCount: 0,
+        failedCount: autoscanIds.length,
+        skippedCount: 0,
+        remaining: 0,
+      };
+    })
+    .finally(() => {
+      isImportBatchRunning = false;
+      importBatchStatus.running = false;
+      importBatchStatus.completed = autoscanIds.length;
+      importBatchStatus.finishedAt = new Date().toISOString();
+    });
+
+  sendJson(res, 202, {
+    ok: true,
+    status: 'started',
+    mode: 'selected',
+    total: autoscanIds.length,
+    completed: 0,
+    message: `Selected import started for ${autoscanIds.length} scan(s)`,
+  });
+}
+
 function handleImportBatchStatus(req, res) {
   if (!assertApilayerSecret(req, res)) return;
 
@@ -775,7 +888,10 @@ function handleImportBatchStatus(req, res) {
     running: importBatchStatus.running,
     startedAt: importBatchStatus.startedAt,
     finishedAt: importBatchStatus.finishedAt,
+    mode: importBatchStatus.mode,
     limit: importBatchStatus.limit,
+    total: importBatchStatus.total,
+    completed: importBatchStatus.completed,
     lastResult: importBatchStatus.lastResult,
   });
 }
@@ -860,6 +976,11 @@ function startHttpServer() {
         return;
       }
 
+      if (req.method === 'POST' && url.pathname === '/import-selected') {
+        await handleImportSelected(req, res);
+        return;
+      }
+
       if (req.method === 'GET' && url.pathname === '/import-batch/status') {
         handleImportBatchStatus(req, res);
         return;
@@ -892,6 +1013,7 @@ function startHttpServer() {
     console.log(`[http] GET /scans/{autoscanId} (header x-apilayer-secret)`);
     console.log(`[http] POST /cache-refresh (header x-apilayer-secret)`);
     console.log(`[http] POST /import-batch (header x-apilayer-secret)`);
+    console.log(`[http] POST /import-selected (header x-apilayer-secret)`);
     console.log(`[http] GET /import-batch/status (header x-apilayer-secret)`);
   });
 

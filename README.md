@@ -82,7 +82,7 @@ curl -s -X POST http://localhost:3100/cache-refresh \
 
 Responses use a clear `status`: `created`, `already_imported`, `incomplete`, or `error`.
 
-The same process also runs an hourly job (`0 * * * *`, Europe/Berlin) that caches new AutoScan `scanned` timestamps into `AutoscanScanCache` (stop-at-already-cached, no full history walk).
+The same process also runs an hourly job (`0 * * * *`, Europe/Berlin) that checks the 1,000 most recent scans per AutoScan project. Settled scans are skipped, while incomplete or unsynchronized scans inside that lookback window are detail-fetched again.
 
 ## Tracking import state
 

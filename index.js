@@ -17,6 +17,7 @@ const CRON_EXPRESSION = '0 6 * * *';
 const CACHE_CRON_EXPRESSION = '0 * * * *';
 const CRON_TIMEZONE = 'Europe/Berlin';
 const IMPORT_DELAY_MS = 500;
+const CACHE_REFRESH_LOOKBACK_SCANS = 1000;
 const INCOMPLETE_ANALYZED = '0001-01-01T00:00:00+00:00';
 const CHECKPOINT_KEY = 'autoscan';
 const DAMAGE_PHOTO_CATEGORY = 'damages';
@@ -132,34 +133,39 @@ function parseScanDate(scan) {
   return Number.isNaN(scannedAt.getTime()) ? null : scannedAt;
 }
 
-async function fetchAllPages(url, label) {
+async function fetchAllPages(url, label, { limit = Infinity } = {}) {
   const allItems = [];
   let skip = 0;
   let page = 1;
 
   console.log(`[api] Fetching all ${label} from ${BASE_URL}${url}`);
 
-  while (true) {
+  while (allItems.length < limit) {
+    const remaining = limit - allItems.length;
+    const pageSize = Number.isFinite(remaining)
+      ? Math.min(PAGE_SIZE, remaining)
+      : PAGE_SIZE;
     const { data } = await api.get(url, {
       headers: {
-        'X-Paging-Top': PAGE_SIZE,
+        'X-Paging-Top': pageSize,
         'X-Paging-Skip': skip,
       },
     });
 
     const items = Array.isArray(data) ? data : [];
-    allItems.push(...items);
+    allItems.push(...items.slice(0, pageSize));
 
-    const isLastPage = items.length < PAGE_SIZE;
+    const isLastPage = items.length < pageSize;
+    const reachedLimit = allItems.length >= limit;
     console.log(
-      `[api] Fetching page ${page} (skip: ${skip})... got ${items.length} ${label}${isLastPage ? ' (last page)' : ''}`
+      `[api] Fetching page ${page} (skip: ${skip})... got ${items.length} ${label}${isLastPage ? ' (last page)' : reachedLimit ? ' (lookback limit reached)' : ''}`
     );
 
-    if (isLastPage) {
+    if (isLastPage || reachedLimit) {
       break;
     }
 
-    skip += PAGE_SIZE;
+    skip += pageSize;
     page += 1;
   }
 
@@ -175,13 +181,21 @@ async function fetchProjects() {
   return projects;
 }
 
-async function fetchScans(projectId, projectName, { orderBy = 'Ascending' } = {}) {
+async function fetchScans(
+  projectId,
+  projectName,
+  { orderBy = 'Ascending', limit = Infinity } = {}
+) {
   console.log(`[api] Loading scans for project: ${projectName} (${projectId}) [${orderBy}]`);
   const params = new URLSearchParams({
     orderBy,
     orderByProperty: 'scanned',
   });
-  return fetchAllPages(`/api/ext/projects/${projectId}/scans?${params.toString()}`, 'scans');
+  return fetchAllPages(
+    `/api/ext/projects/${projectId}/scans?${params.toString()}`,
+    'scans',
+    { limit }
+  );
 }
 
 async function fetchScanDetails(scanId) {
@@ -944,13 +958,19 @@ async function checkScans({ limit = null } = {}) {
   }
 }
 
-async function recordImportBatchLog(result, { limit = null } = {}) {
+async function recordImportBatchLog(
+  result,
+  { limit = null, mode = 'automatic' } = {}
+) {
   if (!result || typeof result !== 'object') return;
 
   try {
     await prisma.autoscanImportBatchLog.create({
       data: {
-        status: result.status || 'unknown',
+        status:
+          mode === 'selected'
+            ? `selected_${result.status || 'unknown'}`
+            : result.status || 'unknown',
         attempts: Number(result.attempts) || 0,
         processedCount: Number(result.processedCount) || 0,
         failedCount: Number(result.failedCount) || 0,
@@ -970,8 +990,93 @@ async function runImportBatch({ limit = DAILY_IMPORT_LIMIT } = {}) {
   return result;
 }
 
+async function runSelectedImportBatch({
+  autoscanIds,
+  onProgress = null,
+} = {}) {
+  const uniqueIds = [
+    ...new Set(
+      (Array.isArray(autoscanIds) ? autoscanIds : [])
+        .filter((value) => typeof value === 'string')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    ),
+  ];
+  const outcomes = [];
+  let processedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  for (const [index, autoscanId] of uniqueIds.entries()) {
+    let result;
+    try {
+      result = await importScan({ id: autoscanId });
+    } catch (error) {
+      result = {
+        ok: false,
+        status: 'error',
+        autoscanId,
+        message:
+          error instanceof Error ? error.message : 'Selected scan import failed',
+      };
+    }
+
+    const status = result?.status || 'error';
+    if (status === 'created' || status === 'overwritten') {
+      processedCount += 1;
+    } else if (status === 'already_imported' || status === 'incomplete') {
+      skippedCount += 1;
+    } else {
+      failedCount += 1;
+    }
+
+    outcomes.push({
+      autoscanId,
+      ok: Boolean(result?.ok),
+      status,
+      message: result?.message || null,
+      reason: result?.reason || null,
+      created: result?.created || null,
+    });
+
+    if (typeof onProgress === 'function') {
+      onProgress(index + 1, uniqueIds.length);
+    }
+    if (index < uniqueIds.length - 1) {
+      await sleep(IMPORT_DELAY_MS);
+    }
+  }
+
+  const result = {
+    ok: failedCount === 0,
+    status: failedCount === 0 ? 'ok' : 'partial_error',
+    message:
+      `Selected batch: ${processedCount} processed, ` +
+      `${failedCount} failed, ${skippedCount} skipped`,
+    attempts: uniqueIds.length,
+    processedCount,
+    failedCount,
+    skippedCount,
+    remaining: 0,
+    outcomes,
+  };
+
+  await recordImportBatchLog(result, {
+    limit: uniqueIds.length,
+    mode: 'selected',
+  });
+  return result;
+}
+
 function isIncompleteAnalyzedDate(scan) {
   return scan?.analyzed === INCOMPLETE_ANALYZED;
+}
+
+function isSynchronizedDateComplete(scan) {
+  return (
+    typeof scan?.synchronized === 'string' &&
+    scan.synchronized !== INCOMPLETE_ANALYZED
+  );
 }
 
 function cacheFieldsFromScan(summary, detail) {
@@ -1001,6 +1106,7 @@ function cacheFieldsFromScan(summary, detail) {
       null,
     scanned: scannedAt,
     isIncomplete: isIncompleteAnalyzedDate(detail),
+    isSynced: isSynchronizedDateComplete(detail),
   };
 }
 
@@ -1033,22 +1139,25 @@ async function refreshAutoscanScanCache() {
 
     for (const [index, project] of projects.entries()) {
       console.log(
-        `[cache] Fetching scans (Descending) for project ${index + 1}/${projects.length}: ${project.name}`
+        `[cache] Fetching up to ${CACHE_REFRESH_LOOKBACK_SCANS} scans (Descending) for project ${index + 1}/${projects.length}: ${project.name}`
       );
-      const summaries = await fetchScans(project.id, project.name, { orderBy: 'Descending' });
+      const summaries = await fetchScans(project.id, project.name, {
+        orderBy: 'Descending',
+        limit: CACHE_REFRESH_LOOKBACK_SCANS,
+      });
 
       for (const summary of summaries) {
         const existing = await prisma.autoscanScanCache.findUnique({
           where: { id: summary.id },
-          select: { id: true },
+          select: { id: true, isIncomplete: true, isSynced: true },
         });
 
-        if (existing) {
+        if (existing && !existing.isIncomplete && existing.isSynced) {
           skippedCached += 1;
           console.log(
-            `  [cache] ${summary.id} | already cached — stop project walk`
+            `  [cache] ${summary.id} | already cached and synced — skip`
           );
-          break;
+          continue;
         }
 
         const label = summary.registrationNumber || summary.id;
@@ -1070,23 +1179,30 @@ async function refreshAutoscanScanCache() {
         const fields = cacheFieldsFromScan(summary, detail);
 
         try {
-          await prisma.autoscanScanCache.create({
-            data: {
-              id: summary.id,
-              ...fields,
-            },
-          });
-          cachedCount += 1;
+          if (existing) {
+            await prisma.autoscanScanCache.update({
+              where: { id: summary.id },
+              data: fields,
+            });
+          } else {
+            await prisma.autoscanScanCache.create({
+              data: {
+                id: summary.id,
+                ...fields,
+              },
+            });
+            cachedCount += 1;
+          }
           console.log(
-            `  [cache] ${summary.id} | scanned: ${fields.scanned ? fields.scanned.toISOString() : 'null'} | incomplete: ${fields.isIncomplete} | CACHED`
+            `  [cache] ${summary.id} | scanned: ${fields.scanned ? fields.scanned.toISOString() : 'null'} | incomplete: ${fields.isIncomplete} | synced: ${fields.isSynced} | ${existing ? 'REFRESHED' : 'CACHED'}`
           );
         } catch (error) {
           if (error.code === 'P2002') {
             skippedCached += 1;
             console.log(
-              `  [cache] ${summary.id} | already cached (race) — stop project walk`
+              `  [cache] ${summary.id} | already cached (race) — skip`
             );
-            break;
+            continue;
           }
           console.error(`[cache] Failed to create cache row for ${summary.id}: ${error.message}`);
           failedDetails += 1;
@@ -1096,7 +1212,7 @@ async function refreshAutoscanScanCache() {
 
     console.log('\n---------- CACHE REPORT ----------');
     console.log(`New scans cached: ${cachedCount}`);
-    console.log(`Skipped (already cached / boundary): ${skippedCached}`);
+    console.log(`Skipped settled/racing cache rows: ${skippedCached}`);
     console.log(`Detail fetches: ${detailFetches}`);
     console.log(`Failed details/creates: ${failedDetails}`);
     console.log('----------------------------------');
@@ -1195,7 +1311,7 @@ async function rebuildAutoscanScanCache() {
           });
           upsertedCount += 1;
           console.log(
-            `  [cache] ${summary.id} | scanned: ${fields.scanned ? fields.scanned.toISOString() : 'null'} | incomplete: ${fields.isIncomplete} | UPSERTED`
+            `  [cache] ${summary.id} | scanned: ${fields.scanned ? fields.scanned.toISOString() : 'null'} | incomplete: ${fields.isIncomplete} | synced: ${fields.isSynced} | UPSERTED`
           );
         } catch (error) {
           console.error(`[cache] Failed to upsert cache row for ${summary.id}: ${error.message}`);
@@ -1304,6 +1420,7 @@ module.exports = {
   listAutoscanScans,
   listScans,
   runImportBatch,
+  runSelectedImportBatch,
   refreshAutoscanScanCache,
   rebuildAutoscanScanCache,
   startScheduler,

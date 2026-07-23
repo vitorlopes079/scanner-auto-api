@@ -336,6 +336,7 @@ model AutoscanScanCache {
   model              String?
   scanned            DateTime?
   isIncomplete       Boolean   @default(false)
+  isSynced           Boolean   @default(false)
   updatedAt          DateTime  @updatedAt
 
   @@index([scanned])

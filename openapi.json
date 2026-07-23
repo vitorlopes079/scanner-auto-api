@@ -16,6 +16,77 @@
     }
   ],
   "paths": {
+    "/import-selected": {
+      "post": {
+        "summary": "Start a selected AutoScan import batch",
+        "description": "Starts a background import for 1 to 25 explicit AutoScan scan IDs. Scans are processed sequentially without overwriting existing projects. Use GET /import-batch/status to monitor progress.",
+        "security": [
+          {
+            "ApiLayerSecret": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "autoscanIds"
+                ],
+                "properties": {
+                  "autoscanIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 25,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              },
+              "example": {
+                "autoscanIds": [
+                  "9752c37d-fe62-4c12-93da-692d4df5e926",
+                  "72af48a0-331a-4e10-9668-a8e37f31c2b9"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Selected background import accepted",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "status": "started",
+                  "mode": "selected",
+                  "total": 2,
+                  "completed": 0,
+                  "message": "Selected import started for 2 scan(s)"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The selected scan ID list is empty or exceeds 25 entries"
+          },
+          "401": {
+            "description": "Missing or invalid x-apilayer-secret header"
+          },
+          "409": {
+            "description": "Another automatic or selected import batch is already running"
+          }
+        },
+        "tags": [
+          "AutoScan Imports"
+        ]
+      }
+    },
     "/scan-corrections": {
       "post": {
         "summary": "Submit or overwrite an AutoScan correction",
@@ -1072,6 +1143,10 @@
     {
       "name": "AutoScan Scans",
       "description": "Read raw AutoScan scan summaries and scan details without correction data."
+    },
+    {
+      "name": "AutoScan Imports",
+      "description": "Start and monitor automatic or explicitly selected AutoScan imports."
     }
   ]
 }
